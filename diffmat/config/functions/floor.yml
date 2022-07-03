@@ -1,0 +1,13 @@
+func:
+  - 'math.floor({a})'
+  - ''
+  - 'torch.floor({a})'
+  - 'torch.floor({a})'
+
+output_level: [0, 1, 2, 3]
+
+input: [a]
+
+promotion_mask: [False, False, False]
+
+param: null

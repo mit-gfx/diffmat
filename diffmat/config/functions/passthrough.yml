@@ -1,0 +1,13 @@
+func:
+  - '{input}'
+  - '{input}'
+  - '{input}'
+  - '{input}'
+
+output_level: [0, 1, 2, 3]
+
+input: [input]
+
+promotion_mask: [False, False, False]
+
+param: null

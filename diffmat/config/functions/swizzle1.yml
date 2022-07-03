@@ -1,0 +1,19 @@
+func:
+  - ''
+  - '{vector}[{swizzle}]'
+  - '{vector}.narrow(0, {swizzle}, 1)'
+  - '{vector}.narrow(-1, {swizzle}, 1)'
+
+output_level: [0, 0, 2, 3]
+
+input: [vector]
+
+# Unary operators do not need promotion masks
+promotion_mask: null
+
+param:
+  - sbs_name:
+      - swizzle1
+      - iswizzle1
+    name: swizzle
+    default: 0

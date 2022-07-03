@@ -1,0 +1,13 @@
+func:
+  - '{a} and {b}'
+  - ''
+  - '{a} & {b}'
+  - '{a} & {b}'
+
+output_level: [0, 1, 2, 3]
+
+input: [a, b]
+
+promotion_mask: [False, False, False]
+
+param: null

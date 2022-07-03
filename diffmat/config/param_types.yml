@@ -1,0 +1,12 @@
+# Parameter type dictionary
+constantValueBool: 4
+constantValueInt32: 16
+constantValueInt1: 16
+constantValueInt2: 32
+constantValueInt3: 64
+constantValueInt4: 128
+constantValueFloat1: 256
+constantValueFloat2: 512
+constantValueFloat3: 1024
+constantValueFloat4: 2048
+constantValueString: 16384

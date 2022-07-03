@@ -1,0 +1,25 @@
+func:
+  - '{value}'
+
+output_level: [1]
+
+input: null
+
+promotion_mask: null
+
+param:
+  - sbs_name:
+      - const_float2
+      - const_float3
+      - const_float4
+      - const_int2
+      - const_int3
+      - const_int4
+    name: value
+    default:
+      const_float2: [0.0, 0.0]
+      const_float3: [0.0, 0.0, 0.0]
+      const_float4: [0.0, 0.0, 0.0, 0.0]
+      const_int2: [0, 0]
+      const_int3: [0, 0, 0]
+      const_int4: [0, 0, 0, 0]

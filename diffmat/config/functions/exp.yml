@@ -1,0 +1,13 @@
+func:
+  - 'math.exp({a})'
+  - ''
+  - 'torch.exp({a})'
+  - 'torch.exp({a})'
+
+output_level: [0, 1, 2, 3]
+
+input: [a]
+
+promotion_mask: [False, False, False]
+
+param: null

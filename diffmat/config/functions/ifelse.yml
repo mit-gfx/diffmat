@@ -1,0 +1,13 @@
+func:
+  - '{ifpath} if {condition} else {elsepath}'
+  - '{ifpath} if {condition} else {elsepath}'
+  - 'torch.where(_at({condition}), _t({ifpath}), _t({elsepath}))'
+  - 'torch.where(_at({condition}), _t({ifpath}), _t({elsepath}))'
+
+output_level: [0, 1, 2, 3]
+
+input: [condition, ifpath, elsepath]
+
+promotion_mask: [False, False, False]
+
+param: null

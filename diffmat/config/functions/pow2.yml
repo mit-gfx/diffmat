@@ -1,0 +1,13 @@
+func:
+  - '2 ** {a}'
+  - ''
+  - '2 ** {a}'
+  - '2 ** {a}'
+
+output_level: [0, 1, 2, 3]
+
+input: [a]
+
+promotion_mask: [False, False, False]
+
+param: null

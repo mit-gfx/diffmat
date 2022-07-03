@@ -1,0 +1,13 @@
+func:
+  - '{a} * {scalar}'
+  - '[i * {scalar} for i in {a}]'
+  - '{a} * {scalar}'
+  - '{a} * {scalar}'
+
+output_level: [0, 1, 2, 3]
+
+input: [a, scalar]
+
+promotion_mask: [False, True, False]
+
+param: null

@@ -1,0 +1,13 @@
+func:
+  - 'float({value})'
+  - '[float(i) for i in {value}]'
+  - '{value}.float()'
+  - '{value}.float()'
+
+output_level: [0, 1, 2, 3]
+
+input: [value]
+
+promotion_mask: [False, False, False]
+
+param: null

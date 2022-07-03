@@ -1,0 +1,29 @@
+func:
+  - ''
+  - '[{vector}[i] for i in {swizzle}]'
+  - '{vector}[{swizzle}]'
+  - '{vector}[..., {swizzle}]'
+
+output_level: [0, 1, 2, 3]
+
+input: [vector]
+
+# Unary operators do not need promotion masks
+promotion_mask: null
+
+param:
+  - sbs_name:
+      - swizzle2
+      - swizzle3
+      - swizzle4
+      - iswizzle2
+      - iswizzle3
+      - iswizzle4
+    name: swizzle
+    default:
+      swizzle2: [0, 1]
+      swizzle3: [0, 1, 2]
+      swizzle4: [0, 1, 2, 3]
+      iswizzle2: [0, 1]
+      iswizzle3: [0, 1, 2]
+      iswizzle4: [0, 1, 2, 3]

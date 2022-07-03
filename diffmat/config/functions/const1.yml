@@ -1,0 +1,19 @@
+func:
+  - '{value}'
+
+output_level: [0]
+
+input: null
+
+promotion_mask: null
+
+param:
+  - sbs_name:
+      - const_float1
+      - const_int1
+      - const_bool
+    name: value
+    default:
+      const_float1: 0.0
+      const_int1: 0
+      const_bool: False

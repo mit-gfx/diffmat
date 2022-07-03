@@ -1,0 +1,13 @@
+func:
+  - '{a} - {b}'
+  - '[i - j for i, j in zip({a}, {b})]'
+  - '{a} - {b}'
+  - '{a} - {b}'
+
+output_level: [0, 1, 2, 3]
+
+input: [a, b]
+
+promotion_mask: [False, True, False]
+
+param: null

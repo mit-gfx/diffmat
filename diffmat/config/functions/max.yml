@@ -1,0 +1,13 @@
+func:
+  - 'max({a}, {b})'
+  - '[max(i, j) for i, j in zip({a}, {b})]'
+  - 'torch.maximum({a}, {b})'
+  - 'torch.maximum({a}, {b})'
+
+output_level: [0, 1, 2, 3]
+
+input: [a, b]
+
+promotion_mask: [True, True, False]
+
+param: null

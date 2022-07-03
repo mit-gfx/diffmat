@@ -1,0 +1,30 @@
+# Node translators' mapping from type to class name
+# The classes are defined in 'translator/node_trans.py' and several other files
+node_trans:
+  default: MaterialNodeTranslator
+  external: ExternalInputNT
+  output: MaterialNodeTranslator
+
+# Paramter translators' mapping from type to class name
+# The classes are defined in 'translator/param_trans.py'
+param_trans:
+  constant: ConstantParamTranslator
+  default: ParamTranslator
+  list_index: ListIndexPT
+  gradient_anchor: GradientMapAnchorPT
+  curve_anchor: CurveAnchorPT
+
+# Function node translators' mapping from type to class name
+# The classes are defined in 'translator/function_trans.py'
+function_trans:
+  default: FunctionNodeTranslator
+  swizzle1: FunctionNodeTranslator
+  swizzle: FunctionNodeTranslator
+  vector: FunctionNodeTranslator
+  tofloat: FunctionNodeTranslator
+  toint: FunctionNodeTranslator
+  const1: FunctionNodeTranslator
+  const: FunctionNodeTranslator
+  div: DivFunctionNT
+  get: GetFunctionNT
+  rand: RandFunctionNT

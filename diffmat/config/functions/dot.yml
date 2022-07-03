@@ -1,0 +1,13 @@
+func:
+  - '{a} * {b}'
+  - 'sum([i * j for i, j in zip({a}, {b})])'
+  - 'torch.dot({a}, {b}).view(1)'
+  - '({a} * {b}).sum(-1, keepdim=True)'
+
+output_level: [0, 0, 2, 3]
+
+input: [a, b]
+
+promotion_mask: [False, True, False]
+
+param: null

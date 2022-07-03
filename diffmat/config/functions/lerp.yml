@@ -1,0 +1,13 @@
+func:
+  - '{a} + {x} * ({b} - {a})'
+  - ''
+  - 'torch.lerp(_t({a}), _t({b}), {x})'
+  - 'torch.lerp(_t({a}), _t({b}), {x})'
+
+output_level: [0, 1, 2, 3]
+
+input: [a, b, x]
+
+promotion_mask: [False, False, False]
+
+param: null

@@ -1,0 +1,13 @@
+func:
+  - 'int({value})'
+  - '[int(i) for i in {value}]'
+  - '{value}.long()'
+  - '{value}.long()'
+
+output_level: [0, 1, 2, 3]
+
+input: [value]
+
+promotion_mask: [False, False, False]
+
+param: null

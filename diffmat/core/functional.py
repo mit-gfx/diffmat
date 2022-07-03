@@ -1,3 +1,40 @@
+from typing import Tuple, List, Union, Optional
+import math
+
+from torch.nn.functional import conv2d, grid_sample as grid_sample_impl, affine_grid
+from torchvision.ops import deform_conv2d
+from scipy.ndimage.morphology import distance_transform_edt
+import numpy as np
+import torch as th
+
+from .util import input_check, input_check_all_positional, check_arg_choice
+from .util import color_input_check, grayscale_input_check
+from .types import FloatValue, FloatVector, FloatArray
+from .log import get_logger
+
+
+# Logger for the functional module
+logger = get_logger('diffmat.core')
+
+
+# Tensor conversion related helper functions
+def to_tensor(a: FloatArray) -> th.Tensor:
+    return th.as_tensor(a, dtype=th.float32)
+
+def to_numpy(a: FloatArray) -> np.ndarray:
+    return a.detach().cpu().numpy() if isinstance(a, th.Tensor) else np.asarray(a)
+
+def to_const(a: FloatArray) -> Union[List[float], float]:
+    return a.detach().cpu().tolist() if isinstance(a, th.Tensor) else \
+           a.tolist() if isinstance(a, np.ndarray) else a
+
+def to_tensor_and_const(a: FloatArray) -> Tuple[th.Tensor, Union[List[float], float]]:
+    return to_tensor(a), to_const(a)
+
+def to_tensor_and_numpy(a: FloatArray) -> Tuple[th.Tensor, np.ndarray]:
+    return to_tensor(a), to_numpy(a)
+
+
 @input_check(3, channel_specs='--g', reduction='any', reduction_range=2)
 def blend(img_fg: Optional[th.Tensor] = None, img_bg: Optional[th.Tensor] = None,
           blend_mask: Optional[th.Tensor] = None, blending_mode: str = 'copy',
@@ -226,6 +263,209 @@ def channel_shuffle(img_in: Optional[th.Tensor] = None, img_in_aux: Optional[th.
     return img_out
 
 
+@input_check(1)
+def curve(img_in: th.Tensor, anchors: Optional[FloatArray] = None) -> th.Tensor:
+    """Atomic node: Curve
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        anchors (list or tensor, optional): Piece-wise Bezier curve anchors. Defaults to None.
+
+    Raises:
+        ValueError: Input anchor array has invalid shape.
+
+    Returns:
+        Tensor: Curve-mapped image.
+
+    TODO:
+        - Support per channel (including alpha) adjustment
+    """
+    # Split the alpha channel from the input image
+    img_in, img_in_alpha = img_in.split(3, dim=1) if img_in.shape[1] == 4 else (img_in, None)
+
+    # When the anchors are not provided, this node simply passes the input image
+    if anchors is None:
+        return img_in
+
+    # Process input anchor table
+    anchors = to_tensor(anchors)
+    num_anchors = anchors.shape[0]
+    if anchors.shape != (num_anchors, 6):
+        raise ValueError(f'Invalid anchors shape: {list(anchors.shape)}')
+
+    # Sort input anchors in ascendng X position order
+    anchors = anchors[th.argsort(anchors[:, 0])]
+
+    # Determine the size of the sample grid
+    res_h, res_w = img_in.shape[2], img_in.shape[3]
+    sample_size_t = max(res_h, res_w) * 2
+    sample_size_x = sample_size_t
+
+    # First sampling pass (parameter space)
+    t = th.linspace(0.0, 1.0, sample_size_t)
+    int_idx = th.sum((t.unsqueeze(1) >= anchors.select(1, 0)), 1)
+    pre_mask, app_mask = int_idx == 0, int_idx == num_anchors
+    int_idx = int_idx.clamp(1, num_anchors - 1) - 1
+
+    anchor_pairs = th.stack((anchors[:-1], anchors[1:]), dim=1)[int_idx]
+    p1 = anchor_pairs.select(1, 0).narrow(1, 0, 2).T
+    p2 = anchor_pairs.select(1, 0).narrow(1, 4, 2).T
+    p3 = anchor_pairs.select(1, 1).narrow(1, 2, 2).T
+    p4 = anchor_pairs.select(1, 1).narrow(1, 0, 2).T
+    A = p4 - p1 + (p2 - p3) * 3.0
+    B = (p1 + p3 - p2 * 2.0) * 3.0
+    C = (p2 - p1) * 3.0
+    D = p1
+
+    t_ = (t - p1[0]) / (p4[0] - p1[0]).clamp_min(1e-8)
+    bz_t = (((A * t_) + B) * t_ + C) * t_ + D
+    bz_t[0] = th.where(pre_mask | app_mask, t, bz_t[0])
+    bz_t[1] = th.where(pre_mask, anchors[0, 1], bz_t[1])
+    bz_t[1] = th.where(app_mask, anchors[-1, 1], bz_t[1])
+
+    # Second sampling pass (x space)
+    x = th.linspace(0.0, 1.0, sample_size_x)
+    int_idx = th.sum((x.unsqueeze(1) >= bz_t[0]), 1)
+    int_idx = int_idx.clamp(1, sample_size_t - 1) - 1
+
+    bz_t_pairs = th.stack((bz_t[:,:-1], bz_t[:,1:])).index_select(2, int_idx)
+    x_ = (x - bz_t_pairs[0, 0]) / (bz_t_pairs[1, 0] - bz_t_pairs[0, 0]).clamp_min(1e-8)
+    bz_y = th.lerp(bz_t_pairs[0, 1], bz_t_pairs[1, 1], x_)
+
+    # Third sampling pass (color space)
+    bz_y = bz_y.expand(img_in.shape[0] * img_in.shape[1], 1, 1, sample_size_x)
+    col_grid = img_in.view(img_in.shape[0] * img_in.shape[1], res_h, res_w, 1) * 2.0 - 1.0
+    sample_grid = th.cat([col_grid, th.zeros_like(col_grid)], 3)
+    img_out = grid_sample_impl(bz_y, sample_grid, align_corners=True)
+    img_out = img_out.clamp(0, 1).view_as(img_in)
+
+    # Append the original alpha channel
+    if img_in_alpha is not None:
+        img_out = th.cat([img_out, img_in_alpha], dim=1)
+
+    return img_out
+
+
+@input_check(1)
+def d_blur(img_in: th.Tensor, intensity: FloatValue = 10.0, angle: FloatValue = 0.0) -> th.Tensor:
+    """Atomic node: Directional Blur
+
+    Args:
+        img_in (tensor): Input image.
+        intensity (float, optional): Filter length. Defaults to 10.0.
+        angle (float, optional): Filter angle. Defaults to 0.0.
+
+    Returns:
+        Tensor: Directional blurred image.
+    """
+    num_group, num_row, num_col = img_in.shape[1], img_in.shape[2], img_in.shape[3]
+
+    # No blur effect when intensity is very small
+    intensity, intensity_const = to_tensor_and_const(intensity * num_row / 256)
+    if intensity_const <= 0.5:
+        return img_in.clone()
+
+    # Wrap the angle within [0, pi/4]
+    angle, angle_const = to_tensor_and_const(angle % 0.5)
+    vertical = angle_const >= 0.125 and angle_const < 0.375
+    invert_offset = angle_const > 0.25
+
+    angle = angle - 0.5 if angle_const >= 0.375 else angle
+    angle = 0.25 - angle if vertical else angle
+    angle = th.abs(angle) * (np.pi * 2.0)
+
+    # Compute horizontal kernel weights
+    cos = th.cos(angle)
+    intensity_x, intensity_x_const = to_tensor_and_const((intensity - 0.5) * cos)
+    kernel_len = int(math.ceil(intensity_x_const) * 2 + 1)
+    kernel_rad = kernel_len >> 1
+    kernel_idx = to_tensor([-abs(i) for i in range(-kernel_rad, kernel_rad + 1)])
+    kernel_weights = th.clamp(kernel_idx + intensity_x + 1, 0.0, 1.0)
+
+    # Special case: angle is 0 or 90 degrees
+    if min(abs(angle_const - val) for val in (0.0, 0.25, 0.5)) < 1e-8:
+
+        # Normalize kernel weights
+        kernel_weights = kernel_weights / kernel_weights.sum()
+        if vertical:
+            kernel = kernel_weights.view(-1, 1).expand(num_group, 1, -1, -1)
+        else:
+            kernel = kernel_weights.expand(num_group, 1, 1, -1)
+
+        # Perform convolution
+        img_in = pad2d(img_in, (kernel_rad, 0) if vertical else (0, kernel_rad))
+        img_out = conv2d(img_in, kernel, groups=num_group)
+        img_out = th.clamp(img_out, 0.0, 1.0)
+
+    # Compute directional motion blur in different algorithms
+    # Special condition (3x3 kernel) when intensity is small
+    elif intensity_x_const <= 1.0:
+
+        # Construct the kernel using trigonometrics
+        tan = th.tan(angle)
+        kernel_2d = th.zeros(9)
+        kernel_2d[[0, 8]] = tan
+        kernel_2d[[3, 5]] = 1 - tan
+        kernel_2d[4] = 1.0
+
+        # Apply kernel weights and normalize the kernel
+        kernel_2d = kernel_2d.view(3, 3) * kernel_weights
+        kernel_2d = kernel_2d / kernel_2d.sum()
+
+        # Account for the other angle ranges
+        kernel_2d = th.flipud(kernel_2d) if invert_offset else kernel_2d
+        kernel_2d = kernel_2d.T if vertical else kernel_2d
+        kernel = kernel_2d.expand(num_group, 1, -1, -1)
+
+        # Perform 3x3 convolution
+        img_in = pad2d(img_in, 1)
+        img_out = conv2d(img_in, kernel, groups=num_group)
+        img_out = th.clamp(img_out, 0.0, 1.0)
+
+    # The other cases require deformable convolution since the blur kernel is 'angled'
+    else:
+
+        # Compute a horizontal 3xN kernel from linear gradient interpolation
+        tan = th.tan(angle)
+        kernel_x = th.linspace(-kernel_rad + 0.5, kernel_rad + 0.5, kernel_len) * tan
+        gradient_left = th.stack((tan, 2 - tan, th.zeros([]))).view(3, 1)
+        gradient_right = gradient_left.roll(1, 0)
+        kernel_2d = th.lerp(gradient_left, gradient_right, kernel_x % 1)
+        kernel_2d = kernel_2d / (tan * (tan - 2) + 2)
+
+        # Apply kernel weights and normalize the kernel
+        kernel_2d = kernel_2d * kernel_weights
+        kernel_2d = kernel_2d / kernel_2d.sum()
+
+        # Account for other angle ranges
+        kernel_2d = th.flipud(kernel_2d) if invert_offset else kernel_2d
+        kernel_2d = kernel_2d.T if vertical else kernel_2d
+        kernel = kernel_2d.expand(num_group, 1, -1, -1)
+
+        # Compute offset for pixel coordinates (for deformable convolution)
+        offset_row = -th.floor(kernel_x) if invert_offset else th.floor(kernel_x)
+        offset_col = th.zeros_like(offset_row)
+        if vertical:
+            offset = th.stack((offset_col, offset_row), dim=1).expand(3, -1, -1).transpose(0, 1)
+        else:
+            offset = th.stack((offset_row, offset_col), dim=1).expand(3, -1, -1)
+
+        # Expand the offset matrix to the target image size
+        batch_size = img_in.shape[0]
+        out_size_row = img_in.shape[2] - kernel.shape[2] + kernel_rad * 2 + 3
+        out_size_col = img_in.shape[3] - kernel.shape[3] + kernel_rad * 2 + 3
+        offset = offset.reshape(-1, 1, 1).expand(batch_size, -1, out_size_row, out_size_col)
+
+        # Run deformable convolution and crop the output image back to original size
+        img_in = pad2d(img_in, kernel_rad + 1)
+        img_out = deform_conv2d(img_in, offset, kernel)
+        row_s, col_s = (out_size_row - num_row) >> 1, (out_size_col - num_col) >> 1
+        img_out_crop = img_out.narrow(2, row_s, num_row).narrow(3, col_s, num_col)
+        img_out = th.clamp(img_out_crop, 0.0, 1.0)
+
+    return img_out
+
+
 @input_check(2, channel_specs='.g')
 def d_warp(img_in: th.Tensor, intensity_mask: th.Tensor, intensity: FloatValue = 10.0,
            angle: FloatValue = 0.0) -> th.Tensor:
@@ -360,6 +600,52 @@ def distance(img_mask: th.Tensor, img_source: Optional[th.Tensor] = None, mode: 
     return img_out
 
 
+@input_check(2, channel_specs='.g')
+def emboss(img_in: th.Tensor, height_map: th.Tensor, intensity: FloatValue = 5.0,
+           light_angle: FloatValue = 0.0, highlight_color: FloatVector = [1.0] * 4,
+           shadow_color: FloatVector = [0.0] * 4) -> th.Tensor:
+    """Atomic node: Emboss
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        height_map (tensor): Height map (G only).
+        intensity (float, optional): Height map multiplier. Defaults to 5.0.
+        light_angle (float, optional): Light angle (in turns). Defaults to 0.0.
+        highlight_color (list, optional): Highlight color. Defaults to [1.0, 1.0, 1.0, 1.0].
+        shadow_color (list, optional): Shadow color. Defaults to [0.0, 0.0, 0.0, 0.0].
+
+    Returns:
+        Tensor: Embossed image.
+    """
+    # Split the alpha channel from the input image
+    img_in, img_in_alpha = img_in.split(3, dim=1) if img_in.shape[1] == 4 else (img_in, None)
+
+    # Process input parameters
+    num_channels, num_rows = img_in.shape[1], img_in.shape[2]
+    intensity = to_tensor(intensity) * (num_rows / 256)
+    light_angle = to_tensor(light_angle) * (math.pi * 2.0)
+
+    highlight_color = to_tensor(highlight_color[:num_channels]).clamp(0.0, 1.0).view(-1, 1, 1)
+    shadow_color = to_tensor(shadow_color[:num_channels]).clamp(0.0, 1.0).view(-1, 1, 1)
+
+    # Compute emboss intensity vector map
+    dx, dy = height_map - height_map.roll(1, 3), height_map - height_map.roll(1, 2)
+    delta = th.stack((dx, dy), dim=1)
+    vec_emboss = th.stack((th.cos(light_angle), th.sin(light_angle))).view(2,1,1,1)
+    intensity = intensity * vec_emboss * th.abs(delta)
+
+    # Apply light and shadow colors
+    light_mask = (delta >= 0) == (intensity >= 0)
+    color_offset = th.where(light_mask, highlight_color, shadow_color - 1)
+    img_out = th.clamp(img_in + (th.abs(intensity) * color_offset).sum(dim=1), 0.0, 1.0)
+
+    # Append the original alpha channel
+    if img_in_alpha is not None:
+        img_out = th.cat([img_out, img_in_alpha], dim=1)
+
+    return img_out
+
+
 @input_check(1, channel_specs='g')
 def gradient_map(img_in: th.Tensor, mode: str = 'color', linear_interp: bool = True,
                  use_alpha: bool = False, anchors: Optional[FloatArray] = None) -> th.Tensor:
@@ -417,6 +703,40 @@ def gradient_map(img_in: th.Tensor, mode: str = 'color', linear_interp: bool = T
     img_out[pre_mask, :] = anchors[0, 1:]
     img_out[app_mask, :] = anchors[-1, 1:]
     img_out = img_out.movedim(3, 1).clamp(0.0, 1.0)
+
+    return img_out
+
+
+@input_check(2, channel_specs='g.')
+def gradient_map_dyn(img_in: th.Tensor, img_gradient: th.Tensor, orientation: str = 'horizontal',
+                     position: FloatValue = 0.0) -> th.Tensor:
+    """Atomic node: Gradient Map (Dynamic)
+
+    Args:
+        img_in (tensor): Input image (G only).
+        img_gradient (tensor): Gradient image (G or RGB(A)).
+        orientation (str, optional): 'vertical' or 'horizontal', sampling direction.
+            Defaults to 'horizontal'.
+        position (float, optional): Normalized position to sample. Defaults to 0.0.
+
+    Returns:
+        Tensor: Gradient map image.
+    """
+    # Check input validity
+    check_arg_choice(orientation, ['horizontal', 'vertical'], arg_name='orientation')
+
+    # Convert parameters to tensors
+    position = to_tensor(position).clamp(0.0, 1.0)
+
+    # Construct sampling grid coordinates using the input image
+    img_in_perm = img_in.movedim(1, 3)
+    x_grid = (position * 2.0 - 1.0).expand_as(img_in_perm)
+    y_grid = img_in_perm * 2.0 - 1.0
+    x_grid, y_grid = (x_grid, y_grid) if orientation == 'vertical' else (y_grid, x_grid)
+    sample_grid = th.cat([x_grid, y_grid], dim=3)
+
+    # Get sampled image as output
+    img_out = grid_sample_impl(img_gradient, sample_grid, align_corners=True)
 
     return img_out
 
@@ -957,6 +1277,544 @@ def histogram_select(img_in: th.Tensor, position: FloatValue = 0.5, ranges: Floa
     return img_out
 
 
+@input_check(1, channel_specs='g')
+def edge_detect(img_in: th.Tensor, invert_flag: bool = False, edge_width: FloatValue = 2.0,
+                edge_roundness: FloatValue = 4.0, tolerance: FloatValue = 0.0) -> th.Tensor:
+    """Non-atomic node: Edge Detect
+
+    Args:
+        img_in (tensor): Input image (G only).
+        invert_flag (bool, optional): Invert the result. Defaults to False.
+        edge_width (float, optional): Normalized width of the detected areas around the edges.
+            Defaults to 2.0.
+        edge_roundness (float, optional): Normalized rounds, blurs and smooths together the
+            generated mask. Defaults to 4.0.
+        tolerance (float, optional): Tolerance threshold factor for where edges should appear.
+            Defaults to 0.0.
+
+    Returns:
+        Tensor: Detected edge image.
+    """
+    # Convert parameters to tensors
+    edge_width, edge_roundness = to_tensor(edge_width), to_tensor(edge_roundness)
+    tolerance = to_tensor(tolerance)
+
+    # Edge detect through symmetric difference
+    img_scale = 256.0 / min(img_in.shape[2], img_in.shape[3])
+    in_blur = blur(img_in, img_scale)
+    blend_sub_1 = blend(in_blur, img_in, blending_mode='subtract')
+    blend_sub_2 = blend(img_in, in_blur, blending_mode='subtract')
+    img_out = blend(blend_sub_1, blend_sub_2, blending_mode='add')
+
+    # Adjust edge tolerance
+    img_out = levels(img_out, in_high=0.05)
+    img_out = levels(img_out, in_low = 0.002, in_high = (tolerance + 0.2) * 0.01)
+
+    # Apply edge width
+    dist, dist_const = to_tensor_and_const((edge_width - 1.0).clamp_min(0.0))
+    img_out = distance(img_out, img_out, combine=False, dist=dist) if dist_const else img_out
+
+    # Apply edge roundness
+    dist, dist_const = to_tensor_and_const(th.ceil(edge_roundness).clamp_min(0.0))
+    img_out = distance(img_out, img_out, combine=False, dist=dist) if dist_const else img_out
+    img_out = 1.0 - img_out
+    img_out = distance(img_out, img_out, combine=False, dist=dist) if dist_const else img_out
+
+    # Optional invert the final output
+    img_out = 1.0 - img_out if invert_flag else img_out
+
+    return img_out
+
+
+@input_check(1)
+def safe_transform(img_in: th.Tensor, tile: int = 1, tile_safe_rot: bool = True,
+                   symmetry: str = 'none', tiling: int = 3, mipmap_mode: str = 'auto',
+                   mipmap_level: int = 0, offset_mode: str = 'manual',
+                   offset: FloatVector = [0.0, 0.0], angle: FloatValue = 0.0) -> th.Tensor:
+    """Non-atomic node: Safe Transform (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        tile (int, optional): Scales the input down by tiling it. Defaults to 1.
+        tile_safe_rot (bool, optional): Determines the behaviors of the rotation, whether it
+            should snap to safe values that don't blur any pixels. Defaults to True.
+        symmetry (str, optional): 'X' | 'Y' | 'X+Y' | 'none', performs symmetric transformation
+            on the input. Defaults to 'none'.
+        tiling (int, optional): see 'tiling' in Transformation 2D. Defaults to 3.
+        mipmap_mode (str, optional): 'auto' or 'manual'. Defaults to 'auto'.
+        mipmap_level (int, optional): Mipmap level. Defaults to 0.
+        offset_mode (str, optional): Offset mode, 'manual' or 'random'. Defaults to 'manual'.
+        offset (list, optional): Translates input by offset. Defaults to [0.0, 0.0].
+        angle (float, optional): Rotates input along angle (in turns). Defaults to 0.0.
+
+    Returns:
+        Tensor: Safe transformed image.
+    """
+    # Check input validity
+    check_arg_choice(symmetry, ['none', 'X', 'Y', 'X+Y'], arg_name='symmetry')
+    check_arg_choice(offset_mode, ['manual', 'random'], arg_name='offset_mode')
+
+    # Symmetry transform
+    if symmetry == 'none':
+        img_out = img_in
+    else:
+        flip_dims = {'X': [2], 'Y': [3], 'X+Y': [2, 3]}[symmetry]
+        img_out = th.flip(img_in, dims=flip_dims)
+
+    # Prepare transform parameters: rotation, scaling, and offset
+    angle = to_tensor(angle)
+    offset_tile = (tile + 1) % 2 * 0.5
+
+    ## Consider tiling safety by truncating to 45*k degrees rotation
+    if tile_safe_rot:
+        angle, angle_const = to_tensor_and_const(th.floor(angle * 8.0) / 8.0)
+        angle_res = abs(angle_const) % 0.25 * (np.pi * 2.0)
+        tile = tile * (math.cos(angle_res) + math.sin(angle_res))
+
+    ## Translation offset
+    num_row, num_col = img_in.shape[2], img_in.shape[3]
+    img_scale = to_tensor([num_col, num_row])
+    offset = to_tensor(offset) if offset_mode == 'manual' else th.rand(2)
+    offset = th.floor(offset * img_scale) / img_scale + offset_tile
+
+    # Affine transformation
+    angle = angle * (math.pi * 2.0)
+    cos_angle, sin_angle = th.cos(angle), th.sin(angle)
+    rotation_matrix = th.stack((cos_angle, -sin_angle, sin_angle, cos_angle))
+    img_out = transform_2d(
+        img_out, tiling=tiling, mipmap_mode=mipmap_mode, mipmap_level=mipmap_level,
+        matrix22=rotation_matrix*tile, offset=offset)
+
+    return img_out
+
+
+@input_check(1)
+def blur_hq(img_in: th.Tensor, high_quality: bool = False,
+            intensity: FloatValue = 10.0) -> th.Tensor:
+    """Non-atomic node: Blur HQ (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        high_quality (bool, optional): Increases internal sampling amount for even higher quality,
+            at reduced computation speed. Defaults to False.
+        intensity (tensor, optional): Normalized strength (radius) of the blur. The higher this
+            value, the further the blur will reach. Defaults to 10.0.
+
+    Returns:
+        Tensor: High quality blurred image.
+    """
+    # Convert parameters to tensors
+    intensity = to_tensor(intensity) * 0.66
+
+    # Basic quality blur - 4 directions
+    blur_1 = img_in
+    for angle in (0.0, 0.125, 0.25, 0.875):
+        blur_1 = d_blur(blur_1, intensity=intensity, angle=angle)
+    img_out = blur_1
+
+    # High quality blur - 8 directions
+    if high_quality:
+        blur_2 = img_in
+        for angle in (0.0625, 0.4375, 0.1875, 0.3125):
+            blur_2 = d_blur(blur_2, intensity=intensity, angle=angle)
+        img_out = blend(img_out, blur_2, opacity=0.5)
+
+    return img_out
+
+
+@input_check(2, channel_specs='.g')
+def non_uniform_blur(img_in: th.Tensor, img_mask: th.Tensor, samples: int = 4, blades: int = 5,
+                     intensity: FloatValue = 10.0, anisotropy: FloatValue = 0.0,
+                     asymmetry: FloatValue = 0.0, angle: FloatValue = 0.0) -> th.Tensor:
+    """Non-atomic node: Non-uniform Blur (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        img_mask (tensor): Blur map (G only).
+        samples (int, optional): Amount of samples, determines quality. Multiplied by amount of
+            Blades. Defaults to 4.
+        blades (int, optional): Amount of sampling sectors, determines quality. Multiplied by
+            amount of Samples. Defaults to 5.
+        intensity (float, optional): Intensity of blur. Defaults to 10.0.
+        anisotropy (float, optional): Optionally adds directionality to the blur effect.
+            Driven by the Angle parameter. Defaults to 0.0.
+        asymmetry (float, optional): Optionally adds a bias to the sampling. Driven by the Angle
+            parameter. Defaults to 0.0.
+        angle (float, optional): Angle to set directionality and sampling bias. Defaults to 0.0.
+
+    Returns:
+        Tensor: Non-uniform blurred image.
+    """
+    # Check input validity
+    check_arg_choice(samples, range(1, 17), arg_name='samples')
+    check_arg_choice(blades, range(1, 10), arg_name='blades')
+
+    # Convert parameters to tensors
+    intensity, intensity_const = to_tensor_and_const(intensity)
+    anisotropy, asymmetry = to_tensor(anisotropy), to_tensor(asymmetry)
+    angle = to_tensor(angle * (math.pi * -2.0))
+
+    # Precompute regular sampling grid
+    num_row, num_col = img_in.shape[2], img_in.shape[3]
+    sample_grid = get_pos(num_row, num_col)
+    scales = to_tensor([num_col / (num_col + 2), num_row / (num_row + 2)])
+
+    # Inline and pre-compute for ellipse
+    cos_angle, sin_angle = th.cos(angle), th.sin(angle)
+    vec_1, vec_2 = th.stack((sin_angle, cos_angle)), th.stack((cos_angle, -sin_angle))
+    ellipse_factor_inv = 1.0 - anisotropy
+    center_x = th.clamp_min(asymmetry * 0.5, 0.0)
+
+    # Elliptic sampling function
+    def ellipse(samples: int, sample_number: int, radius: th.Tensor,
+                inner_rotation: float) -> th.Tensor:
+
+        angle_1 = (sample_number / samples + inner_rotation) * (np.pi * 2.0)
+        cos_1, sin_1 = math.cos(angle_1), math.sin(angle_1)
+        factor_1 = ellipse_factor_inv * sin_1
+        factor_2 = center_x * (abs(cos_1) - cos_1) + cos_1
+
+        return radius * (vec_1 * factor_1 + vec_2 * factor_2)
+
+    # Compute progressive warping results based on 'samples'
+    def non_uniform_blur_sample(img_in: th.Tensor, img_mask: th.Tensor, intensity: th.Tensor,
+                                inner_rotation: float) -> th.Tensor:
+
+        # Pre-pad the input image
+        img_pad = pad2d(img_in, 1)
+        img_out = img_in
+
+        # Progressive warping towards multiple blades
+        for i in range(1, blades + 1):
+
+            # Inline d-warp and blend
+            e_vec = ellipse(blades, i, intensity, inner_rotation)
+            sample_grid_ = (sample_grid + img_mask.movedim(1, 3) * (e_vec / 256)) % 1 * 2 - 1
+            sample_grid_ = sample_grid_ * scales
+            img_warp = grid_sample_impl(img_pad, sample_grid_, align_corners=False)
+            img_out = th.lerp(img_out, img_warp, 1.0 / (i + 1))
+
+        return img_out
+
+    # Compute progressive blurring based on 'samples' and 'intensity'
+    samples_level = min(samples, int(math.ceil(intensity_const * math.pi)))
+    img_out = non_uniform_blur_sample(img_in, img_mask, intensity, 1 / samples)
+
+    for i in range(1, samples_level):
+        intensity_scale = math.exp(-i * math.sqrt(math.log(1e3) / math.e) / samples_level) ** 2
+        blur_intensity = intensity * intensity_scale
+        inner_rotation = 1 / (samples * (i + 1))
+        img_out = non_uniform_blur_sample(img_out, img_mask, blur_intensity, inner_rotation)
+
+    return img_out
+
+
+@input_check(1, channel_specs='g')
+def bevel(img_in: th.Tensor, non_uniform_blur_flag: bool = True, use_alpha: bool = False,
+          dist: FloatValue = 0.5, smoothing: FloatValue = 0.0,
+          normal_intensity: FloatValue = 10.0) -> Tuple[th.Tensor, th.Tensor]:
+    """Non-atomic node: Bevel
+
+    Args:
+        img_in (tensor): Input image (G only).
+        non_uniform_blur_flag (bool, optional): Whether smoothing should be done non-uniformly.
+            Defaults to True.
+        use_alpha (bool, optional): Enable the alpha channel in output. Defaults to False.
+        dist (float, optional): How far the bevel effect should reach. Defaults to 0.5.
+        smoothing (float, optional): How much additional smoothing (blurring) to perform after
+            the bevel. Defaults to 0.0.
+        normal_intensity (float, optional): Normalized intensity of the generated normal map.
+            Defaults to 10.0.
+
+    Returns:
+        Tensor: Bevel image (G).
+        Tensor: Normal map (RGB(A)).
+    """
+    # Convert parameters to tensors
+    dist, dist_const = to_tensor_and_const(dist)
+    smoothing, smoothing_const = to_tensor_and_const(smoothing)
+    normal_intensity = to_tensor(normal_intensity)
+
+    # Compute beveled height map
+    if dist_const > 0:
+        height = distance(img_in, combine=True, dist=dist * 128)
+    elif dist_const < 0:
+        height = 1.0 - distance(1.0 - img_in, combine=True, dist=-dist * 128)
+    else:
+        height = img_in
+
+    # Height map smoothing after beveling
+    if smoothing_const > 0:
+        if non_uniform_blur_flag:
+            img_blur = blur(height, intensity=0.5)
+            img_blur = levels(img_blur, in_high=0.0214)
+            height = non_uniform_blur(height, img_blur, samples=6, blades=5, intensity=smoothing)
+        else:
+            height = blur_hq(height, intensity=smoothing)
+
+    # Compute normal map from height map
+    normal_1 = normal(height.rot90(2, (2, 3)), use_alpha=use_alpha, intensity=normal_intensity)
+    normal_1 = normal_1.rot90(2, (2, 3))
+    normal_1[:, :2] = 1.0 - normal_1.narrow(1, 0, 2)
+
+    normal_2 = normal(height, use_alpha=use_alpha, intensity=normal_intensity)
+    normal_out = blend(normal_1, normal_2, opacity=0.5)
+
+    return height, normal_out
+
+
+@input_check(2, channel_specs='.g')
+def slope_blur(img_in: th.Tensor, img_mask: th.Tensor, samples: int = 8, mode: str = 'blur',
+               intensity: FloatValue = 10.0) -> th.Tensor:
+    """Non-atomic node: Slope Blur (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        img_mask (tensor): Mask image (G only).
+        samples (int, optional): Amount of samples, affects the quality at the expense of speed.
+            Defaults to 1.
+        mode (str, optional): Blending mode for consequent blur passes. "Blur" behaves more like
+            a standard Anisotropic Blur, while Min will "eat away" existing areas and Max will
+            "smear out" white areas. Defaults to 'blur'.
+        intensity (tensor, optional): Normalized blur amount or strength. Defaults to 10.0.
+
+    Returns:
+        Tensor: Slope blurred image.
+    """
+    # Check input validity
+    check_arg_choice(samples, range(1, 33), arg_name='samples')
+    check_arg_choice(mode, ['blur', 'min', 'max'], arg_name='mode')
+
+    # Convert parameters to tensors
+    intensity, intensity_const = to_tensor_and_const(intensity)
+
+    # Special case - no action needed
+    if intensity_const == 0:
+        return img_in
+
+    # Compute displacement vector field and the sampling grid for warping
+    num_row, num_col = img_in.shape[2], img_in.shape[3]
+    scales = to_tensor([num_col / 256, num_row / 256])
+    vec_shift = th.cat((img_mask - th.roll(img_mask, 1, 3),
+                        img_mask - th.roll(img_mask, 1, 2)), dim=1)
+    vec_shift = vec_shift.movedim(1, 3) * (scales * (intensity / samples))
+
+    sample_grid = (get_pos(num_row, num_col) + vec_shift) % 1 * 2 - 1
+    sample_grid = sample_grid * to_tensor([num_col / (num_col + 2), num_row / (num_row + 2)])
+
+    # Apply slope blur effect via progressive warping and blending
+    blending_mode = 'switch' if mode == 'blur' else mode
+    img_warp = grid_sample_impl(pad2d(img_in, 1), sample_grid, align_corners=False)
+    img_out = img_warp
+    for i in range(2, samples + 1):
+        img_warp = grid_sample_impl(pad2d(img_warp, 1), sample_grid, align_corners=False)
+        img_out = blend(img_warp, img_out, blending_mode=blending_mode, opacity=1 / i)
+
+    return img_out
+
+
+@input_check(2, channel_specs='.g')
+def mosaic(img_in: th.Tensor, img_mask: th.Tensor, samples: int = 1,
+           intensity: FloatValue = 0.5) -> th.Tensor:
+    """Non-atomic node: Mosaic (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        img_mask (tensor): Mask image (G only).
+        samples (int, optional): Determines multi-sample quality. Defaults to 1.
+        intensity (float, optional): Strength of the effect. Defaults to 0.5.
+
+    Returns:
+        Tensor: Mosaic image.
+    """
+    # Check input validity
+    check_arg_choice(samples, range(1, 17), arg_name='samples')
+
+    # Convert parameters to tensors
+    intensity = to_tensor(intensity)
+    if intensity == 0:
+        return img_in
+
+    # Compute displacement vector field and the sampling grid for warping
+    num_row, num_col = img_in.shape[2], img_in.shape[3]
+    scales = to_tensor([num_col / 256, num_row / 256])
+    vec_shift = th.cat((img_mask - th.roll(img_mask, 1, 3),
+                        img_mask - th.roll(img_mask, 1, 2)), 1)
+    vec_shift = vec_shift.movedim(1, 3) * (scales * (intensity / samples))
+
+    sample_grid = (get_pos(num_row, num_col) + vec_shift) % 1 * 2 - 1
+    sample_grid = sample_grid * to_tensor([num_col / (num_col + 2), num_row / (num_row + 2)])
+
+    # Apply mosaic effect via progressive warping
+    img_out = img_in
+    for _ in range(samples):
+        img_out = grid_sample_impl(pad2d(img_out, 1), sample_grid, align_corners=False)
+
+    return img_out
+
+
+@input_check(1, channel_specs='g')
+def auto_levels(img_in: th.Tensor) -> th.Tensor:
+    """Non-atomic node: Auto Levels
+
+    Args:
+        img_in (tensor): Input image (G only).
+
+    Returns:
+        Tensor: Auto leveled image.
+    """
+    # Get input pixel value range
+    max_val, min_val = th.max(img_in), th.min(img_in)
+    delta, delta_const = to_tensor_and_const(max_val - min_val)
+
+    # When input is a uniform image, and the pixel value is smaller (or greater) than 0.5,
+    # output a white (or black) image
+    if delta_const == 0:
+        img_out = th.ones_like(img_in) if to_const(max_val) < 0.5 else th.zeros_like(img_in)
+    else:
+        img_out = (img_in - min_val) / (delta + 1e-15)
+
+    return img_out
+
+
+@input_check(1, channel_specs='g')
+def ambient_occlusion(img_in: th.Tensor, spreading: FloatValue = 0.15,
+                      equalizer: FloatVector = [0.0, 0.0, 0.0],
+                      levels_param: FloatVector = [0.0, 0.5, 1.0]) -> th.Tensor:
+    """Non-atomic node: Ambient Occlusion (deprecated)
+
+    Args:
+        img_in (tensor): Input image (G only).
+        spreading (float, optional): Area of the ambient occlusion effect. Defaults to 0.15.
+        equalizer (list, optional): Frequency equalizer. Defaults to [0.0, 0.0, 0.0].
+        levels_param (list, optional): Controls final levels mapping. Defaults to [0.0, 0.5, 1.0].
+
+    Returns:
+        Tensor: ambient occlusion image
+    """
+    # Process parameters
+    spreading, equalizer = to_tensor(spreading), to_tensor(equalizer)
+    levels_param = to_tensor(levels_param)
+
+    # Calculate an initial ambient occlusion map
+    img_blur = blur_hq(1.0 - img_in, intensity = spreading * 128.0)
+    img_ao = levels((img_blur + img_in).clamp_max(1.0), in_low=0.5)
+    img_normal_z = normal(img_in, intensity=16.0)[:, 2:3]
+    img_ao = img_ao * (img_ao + (1.0 - img_normal_z)).clamp_max(1.0)
+
+    # Frequency split
+    img_ao_blur = blur_hq(manual_resize(img_ao, -1), intensity=2.2)
+    img_ao_blur_2 = blur_hq(manual_resize(img_ao_blur, -1), intensity=3.3)
+    img_blend = blend(manual_resize(1.0 - img_ao_blur, 1), img_ao,
+                      blending_mode='add_sub', opacity=0.5)
+    img_blend_1 = blend(manual_resize(1.0 - img_ao_blur_2, 1), img_ao_blur,
+                        blending_mode='add_sub', opacity=0.5)
+
+    # Frequency equalization and composition
+    img_ao_blur_2 = levels(img_ao_blur_2, in_mid = (equalizer[0] + 1) * 0.5)
+    img_blend_1 = blend(img_blend_1, manual_resize(img_ao_blur_2, 1), blending_mode = 'add_sub',
+                        opacity = equalizer[1] + 0.5)
+    img_blend = blend(img_blend, manual_resize(img_blend_1, 1), blending_mode = 'add_sub',
+                      opacity = equalizer[2] + 0.5)
+
+    # Final gamma correction
+    img_out = levels(img_blend, in_low=levels_param[0], in_mid=levels_param[1],
+                     in_high=levels_param[2])
+
+    return img_out
+
+
+@input_check(1, channel_specs='g')
+def hbao(img_in: th.Tensor, quality: int = 4, depth: FloatValue = 0.1,
+         radius: FloatValue = 1.0) -> th.Tensor:
+    """Non-atomic node: Ambient Occlusion (HBAO)
+
+    Args:
+        img_in (tensor): Input image (G only).
+        quality (int, optional): Amount of samples used for calculation. Defaults to 4.
+        depth (float, optional): Height depth. Defaults to 0.1.
+        radius (float, optional): The spread of the AO. Defaults to 1.0.
+
+    Raises:
+        NotImplementedError: Input image batch size is greater than 1.
+
+    Returns:
+        Tensor: ambient occlusion image.
+    """
+    # Check input validity
+    check_arg_choice(quality, [4, 8, 16], arg_name='quality')
+    if img_in.shape[0] > 1:
+        raise NotImplementedError('Batched HBAO operation is currently not supported')
+
+    # Convert parameters to tensors
+    num_row, num_col = img_in.shape[2], img_in.shape[3]
+    pixel_size = 1.0 / max(num_row, num_col)
+    depth = to_tensor(depth) * min(num_row, num_col)
+    radius = to_tensor(radius)
+
+    # Create mipmap stack
+    in_low, in_high = levels(img_in, out_high=0.5), levels(img_in, out_low=0.5)
+    mipmaps_level = 11
+    mipmaps = create_mipmaps(in_high, mipmaps_level, keep_size=True)
+
+    # Precompute weights
+    min_size_log2 = int(math.log2(min(num_row, num_col)))
+    weights = radius * to_tensor([2 ** (min_size_log2 - i - 1) for i in range(mipmaps_level)]) - 1
+    weights = weights.clamp(0.0, 1.0)
+
+    # HBAO cone sampling
+    ## Initialize the initial sampling grid and angle vectors in all sampling cones
+    sample_grid_init = get_pos(num_row, num_col)
+    angle_vecs = [(math.cos(i * math.pi * 2.0 / quality),
+                   math.sin(i * math.pi * 2.0 / quality)) for i in range(quality)]
+    angle_vecs = to_tensor(angle_vecs)
+
+    ## Initialize cone sampling result
+    img_sample = th.zeros_like(img_in)
+
+    ## Run parallel cone sampling on each mipmap level
+    for mm_idx, img_mm in enumerate(mipmaps):
+
+        # Sample all cones in parallel
+        mm_scale = (1 << mm_idx + 1)
+        sample_grid = sample_grid_init + mm_scale * pixel_size * angle_vecs.view(quality, 1, 1, 2)
+        img_mm_gs = grid_sample(img_mm.expand(quality, -1, -1, -1), sample_grid, sbs_format=True)
+
+        # Add contribution from the current mipmap level to cone sampling result
+        img_diff = (img_mm_gs - in_low - 0.5) / mm_scale
+        img_max = th.max(img_max, img_diff) if mm_idx else img_diff
+        img_sample = th.lerp(img_sample, img_max, weights[mm_idx])
+
+    # Aggregate result from cones into the final image
+    img_sample = img_sample * (depth * 2.0)
+    img_sample = img_sample / th.sqrt(img_sample ** 2 + 1.0)
+    img_out = th.mean(img_sample, 0, keepdim=True).view_as(img_in)
+
+    # Final output
+    img_out = th.clamp(1.0 - img_out, 0.0, 1.0)
+
+    return img_out
+
+
+@input_check(1)
+def highpass(img_in: th.Tensor, radius: FloatValue = 6.0) -> th.Tensor:
+    """Non-atomic node: Highpass (Color or Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        radius (float, optional): A small radius removes small differences, a bigger radius removes
+            large areas. Defaults to 6.0.
+
+    Returns:
+        Tensor: Highpass filtered image.
+    """
+    # Highpass filter
+    img_out = 1.0 - blur(img_in, radius)
+    img_out = blend(img_out, img_in, blending_mode='add_sub', opacity=0.5)
+
+    return img_out
+
+
 @input_check(1, channel_specs='c')
 def normal_normalize(normal: th.Tensor) -> th.Tensor:
     """Non-atomic function: Normal Normalize
@@ -1108,6 +1966,168 @@ def normal_combine(img_normal1: th.Tensor, img_normal2: th.Tensor,
 
     # Clamp final output
     img_out = th.clamp(img_out, 0.0, 1.0)
+
+    return img_out
+
+
+@input_check(1, channel_specs='g')
+def height_to_normal_world_units(img_in: th.Tensor, normal_format: str = 'dx',
+                                 sampling_mode: str = 'standard', use_alpha: bool = False,
+                                 surface_size: FloatValue = 300.0,
+                                 height_depth: FloatValue = 16.0) -> th.Tensor:
+    """Non-atomic node: Height to Normal World Units
+
+    Args:
+        img_in (tensor): Input image (G only).
+        normal_format (str, optional): 'gl' or 'dx'. Defaults to 'gl'.
+        sampling_mode (str, optional): 'standard' or 'sobel', switches between two sampling modes
+            determining accuracy. Defaults to 'standard'.
+        use_alpha (bool, optional): Enable the alpha channel. Defaults to False.
+        surface_size (float, optional): Normalized dimensions of the input height map.
+            Defaults to 300.0.
+        height_depth (float, optional): Normalized depth of height map details. Defaults to 16.0.
+
+    Returns:
+        Tensor: Normal image.
+    """
+    # Check input validity
+    check_arg_choice(normal_format, ['dx', 'gl'], arg_name='normal_format')
+    check_arg_choice(sampling_mode, ['standard', 'sobel'], arg_name='sampling_mode')
+
+    # Convert parameters to tensors
+    surface_size, surface_size_const = to_tensor_and_const(surface_size)
+    height_depth = to_tensor(height_depth)
+
+    aspect_ratio = height_depth / surface_size if surface_size_const > 0 else 0.0
+    res_x, inv_res_x = img_in.shape[2], 1.0 / img_in.shape[2]
+    res_y, inv_res_y = img_in.shape[3], 1.0 / img_in.shape[3]
+
+    # Standard normal conversion
+    if sampling_mode == 'standard':
+        img_out = normal(img_in, normal_format = normal_format, use_alpha = use_alpha,
+                         intensity = aspect_ratio * 256.0)
+
+    # Sobel sampling
+    else:
+
+        # Convolution
+        db_x = d_blur(img_in, intensity = inv_res_x * 256.0)
+        db_y = d_blur(img_in, intensity = inv_res_y * 256.0, angle = 0.25)
+        sample_x = db_y.roll(1, 3) - db_y.roll(-1, 3)
+        sample_y = db_x.roll(-1, 2) - db_x.roll(1, 2)
+
+        # Multiplier
+        mult_x = aspect_ratio * (res_x * 0.5)
+        mult_y = aspect_ratio * ((-1.0 if normal_format == 'dx' else 1.0) * res_y * 0.5)
+        sample_x = sample_x * (mult_x * (min(res_x, res_y) / res_x))
+        sample_y = sample_y * (mult_y * (min(res_x, res_y) / res_y))
+
+        # Output
+        scale = 0.5 * th.rsqrt(sample_x ** 2 + sample_y ** 2 + 1)
+        img_out = th.cat([sample_x, sample_y, th.ones_like(img_in)], dim=1) * scale + 0.5
+        img_out = th.clamp(img_out, 0.0, 1.0)
+
+        # Add opaque alpha channel
+        img_out = th.cat([img_out, th.ones_like(img_in)], dim=1) if use_alpha else img_out
+
+    return img_out
+
+
+@input_check(1, channel_specs='c')
+def normal_to_height(img_in: th.Tensor, normal_format: str = 'dx',
+                     relief_balance: FloatVector = [0.5, 0.5, 0.5],
+                     opacity: FloatValue = 0.36) -> th.Tensor:
+    """Non-atomic node: Normal to Height
+
+    Args:
+        img_in (tensor): Input image (RGB(A) only).
+        normal_format (str, optional): 'gl' or 'dx'. Defaults to 'dx'.
+        relief_balance (list, optional): Adjust the extent to which the different frequencies
+            influence the final result.
+        This is largely dependent on the input map and requires a fair bit of tweaking.
+            Defaults to [0.5, 0.5, 0.5].
+        opacity (float, optional): Global opacity of the effect. Defaults to 0.36.
+
+    Raises:
+        NotImplementedError: Input image size is smaller than 16.
+
+    Returns:
+        Tensor: Height image.
+    """
+    # Check input validity
+    check_arg_choice(normal_format, ['dx', 'gl'], arg_name='normal_format')
+    if int(math.log2(img_in.shape[2])) < 4:
+        raise NotImplementedError('Image sizes smaller than 16 are not supported')
+
+    # Convert parameters to tensors
+    relief_balance = to_tensor(relief_balance) * opacity
+    low_freq, mid_freq, high_freq = relief_balance.unbind()
+
+    # Frequency transform for R and G channels
+    img_freqs = frequency_transform(img_in[:,:2], normal_format=normal_format)
+    img_out = None
+
+    # Low frequencies (for 16x16 images only)
+    for i in range(4):
+        coeff = 0.0625 * 2 * (8 >> i) * 100
+        blend_opacity = th.clamp(coeff * low_freq, 0.0, 1.0)
+        img_out = img_freqs[i] if img_out is None else \
+            blend(img_freqs[i], img_out, blending_mode='add_sub', opacity=blend_opacity)
+
+    # Mid frequencies
+    for i in range(min(2, len(img_freqs) - 4)):
+        coeff = 0.0156 * 2 * (2 >> i) * 100
+        blend_opacity = th.clamp(coeff * mid_freq, 0.0, 1.0)
+        img_out = blend(img_freqs[i + 4], manual_resize(img_out, 1), blending_mode='add_sub',
+                        opacity=blend_opacity)
+
+    # High frequencies
+    for i in range(min(6, len(img_freqs) - 6)):
+        coeff = 0.0078 * 0.0625 * (32 >> i) * 100 if i < 5 else 0.0078 * 0.0612 * 100
+        blend_opacity = th.clamp(coeff * high_freq, 0.0, 1.0)
+        img_out = blend(img_freqs[i + 6], manual_resize(img_out, 1), blending_mode='add_sub',
+                        opacity=blend_opacity)
+
+    # Combine both channels
+    img_out = blend(*img_out.split(1, dim=1), blending_mode='add_sub', opacity=0.5)
+
+    return img_out
+
+
+@input_check(1, channel_specs='c')
+def curvature_smooth(img_in: th.Tensor, normal_format: str = 'dx') -> th.Tensor:
+    """Non-atomic node: Curvature Smooth
+
+    Args:
+        img_in (tensor): Input normal image (RGB(A) only).
+        normal_format (str, optional): 'dx' or 'gl'. Defaults to 'dx'.
+
+    Raises:
+        NotImplementedError: Input image size is smaller than 16.
+
+    Returns:
+        Tensor: Curvature smooth image.
+    """
+    # Check input validity
+    check_arg_choice(normal_format, ['dx', 'gl'], arg_name='normal_format')
+    if int(math.log2(img_in.shape[2])) < 4:
+        raise NotImplementedError('Image sizes smaller than 16 are not supported')
+
+    # Frequency transform for R and G channels
+    img_freqs = frequency_transform(img_in[:,:2], normal_format)
+    img_out = img_freqs[0]
+
+    # Low frequencies (for 16x16 images only)
+    for i in range(1, 4):
+        img_out = blend(img_freqs[i], img_out, blending_mode='add_sub', opacity=0.25)
+
+    # Mid and high frequencies
+    for i in range(4, len(img_freqs)):
+        img_out = blend(img_freqs[i], manual_resize(img_out, 1), blending_mode='add_sub',
+                        opacity=1.0 / (i + 1))
+
+    # Combine both channels
+    img_out = blend(*img_out.split(1, dim=1), blending_mode='add_sub', opacity=0.5)
 
     return img_out
 
@@ -1312,6 +2332,975 @@ def normal_blend(normal_fg: th.Tensor, normal_bg: th.Tensor, mask: Optional[th.T
 
     # Normalize the blended normal map
     img_out = normal_normalize(img_out)
+
+    return img_out
+
+
+@input_check(1)
+def mirror(img_in: th.Tensor, mirror_axis: str = 'x', corner_type: str = 'tl',
+           invert_x: bool = False, invert_y: bool = False, offset_x: FloatValue = 0.5,
+           offset_y: FloatValue = 0.5) -> th.Tensor:
+    """Non-atomic node: Mirror (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        mirror_axis (int, optional): 'x' | 'y' | 'corner'. Defaults to 'x'.
+        corner_type (int, optional): 'tl' | 'tr' | 'bl' | 'br'. Defaults to 'tl'.
+        invert_x (bool, optional): Whether flip along x-axis. Defaults to False.
+        invert_y (bool, optional): Whether flip along y-axis. Defaults to False.
+        offset_x (float, optional): Where the axis locates. Defaults to 0.5.
+        offset_y (float, optional): Where the axis locates. Defaults to 0.5.
+
+    Returns:
+        Tensor: Mirrored image.
+    """
+    # Check input validity
+    check_arg_choice(mirror_axis, ['x', 'y', 'corner'], arg_name='mirror_axis')
+    check_arg_choice(corner_type, ['tl', 'tr', 'bl', 'br'], arg_name='corner_type')
+
+    # Input image dimensions
+    res_h, res_w = img_in.shape[2], img_in.shape[3]
+
+    # Helper function that calculates copy slices
+    def get_copy_slice(offset: int, dim_size: int) -> Tuple[int, int, int]:
+        dst_left = max(offset, 0)
+        length = min(offset, 0) + dim_size - dst_left
+        src_left = dim_size - length if dst_left == 0 else 0
+        return src_left, dst_left, length
+
+    # Horizontal/vertical mirror
+    if mirror_axis in 'xy':
+
+        # Determine tensor dimension, offset, and invert flag given the mirror axis option
+        dim = 3 if mirror_axis == 'x' else 2
+        dim_size = (res_h, res_w)[dim - 2]
+        offset = (offset_x, 1.0 - offset_y)[3 - dim]
+        invert = (invert_x, invert_y)[3 - dim]
+
+        # Offset the mirrored half of the image
+        img_flip = th.flip(img_in, [dim])
+        img_fg = th.zeros_like(img_flip)
+        offset, offset_const = to_tensor_and_const(offset)
+        offset_flip = (offset * 2 - 1) * dim_size
+        offset_flip_const = (offset_const * 2 - 1) * dim_size
+        i_src, i_dst, i_length = get_copy_slice(int(math.floor(offset_flip_const)), dim_size)
+        j_src, j_dst, j_length = get_copy_slice(int(math.ceil(offset_flip_const)), dim_size)
+
+        if i_length == j_length:
+            img_fg.narrow(dim, i_dst, i_length).copy_(img_flip.narrow(dim, i_src, i_length))
+        else:
+            weight = offset_flip % 1.0
+            img_fg.narrow(dim, i_dst, i_length).copy_(
+                img_flip.narrow(dim, i_src, i_length) * (1.0 - weight))
+            img_fg.narrow(dim, j_dst, j_length).add_(
+                img_flip.narrow(dim, j_src, j_length) * weight)
+
+        # Blend the original image and the mirrored one
+        offset_blend = offset * dim_size
+        offset_blend_const = offset_const * dim_size
+        weights_blend = th.arange(dim_size) + (1.0 - offset_blend % 1.0) - int(offset_blend_const)
+        weights_blend = th.atleast_2d(th.clamp(weights_blend, 0.0, 1.0))
+        weights_blend = 1.0 - weights_blend if invert else weights_blend
+        img_out = th.lerp(img_in, img_fg, weights_blend.T if dim == 2 else weights_blend)
+
+    # Center mirror
+    elif mirror_axis == 'corner':
+        img_out = img_in.clone()
+
+        # Vertical mirror first
+        res_h //= 2
+        top_half, bottom_half = img_out.narrow(2, 0, res_h), img_out.narrow(2, res_h, res_h)
+        if corner_type.startswith('t'):
+            bottom_half.copy_(th.flip(top_half, [2]))
+        else:
+            top_half.copy_(th.flip(bottom_half, [2]))
+
+        # Horizontal mirror next
+        res_w //= 2
+        left_half, right_half = img_out.narrow(3, 0, res_w), img_out.narrow(3, res_w, res_w)
+        if corner_type.endswith('l'):
+            right_half.copy_(th.flip(left_half, [3]))
+        else:
+            left_half.copy_(th.flip(right_half, [3]))
+
+    return img_out
+
+
+@input_check(1)
+def make_it_tile_patch(img_in: th.Tensor, octave: int = 3, mask_size: FloatValue = 1.0,
+                       mask_precision: FloatValue = 0.5, mask_warping: FloatValue = 0.0,
+                       pattern_width: FloatValue = 200.0, pattern_height: FloatValue = 200.0,
+                       disorder: FloatValue = 0.0, size_variation: FloatValue = 0.0,
+                       rotation: FloatValue = 0.0, rotation_variation: FloatValue = 0.0,
+                       background_color: FloatVector = [0.0, 0.0, 0.0, 1.0],
+                       color_variation: FloatValue = 0.0) -> th.Tensor:
+    """Non-atomic node: Make it Tile Patch (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        octave (int, optional): Logarithm of the tiling factor (by 2). Defaults to 3.
+        use_alpha (bool, optional): Enable the alpha channel. Defaults to False.
+        mask_size (float, optional): Size of the round mask used when stamping the patch.
+            Defaults to 1.0.
+        mask_precision (float, optional): Falloff/smoothness precision of the mask.
+            Defaults to 0.5.
+        mask_warping (float, optional): Warping intensity at mask edges. Defaults to 0.0.
+        pattern_width (float, optional): Width of the patch. Defaults to 200.0.
+        pattern_height (float, optional): Height of the patch. Defaults to 200.0.
+        disorder (float, optional): Translational randomness. Defaults to 0.0.
+        size_variation (float, optional): Size variation for the mask. Defaults to 0.0.
+        rotation (float, optional): Rotation angle of the patch (in turning number).
+            Defaults to 0.0.
+        rotation_variation (float, optional): Randomness in rotation for every patch stamp.
+            Defaults to 0.0.
+        background_color (list, optional): Background color for areas where no patch appears.
+            Defaults to [0.0, 0.0, 0.0, 1.0].
+        color_variation (float, optional): Color (or luminosity) variation per patch.
+            Defaults to 0.0.
+
+    Returns:
+        Tensor: Image with stamped patches of the input.
+    """
+    _, num_channels, num_rows, num_cols = img_in.shape
+
+    # Process input parameters
+    mask_size = to_tensor(mask_size)
+    mask_precision = to_tensor(mask_precision)
+    mask_warping, mask_warping_const = to_tensor_and_const(mask_warping)
+    pattern_w = to_tensor(pattern_width * 0.01)
+    pattern_h = to_tensor(pattern_height * 0.01)
+    disorder, disorder_const = to_tensor_and_const(disorder)
+    size_var, size_var_const = to_tensor_and_const(size_variation * 0.01)
+    rotation = to_tensor(rotation * 0.0028)
+    rotation_var, rotation_var_const = to_tensor_and_const(rotation_variation * 0.0028)
+    background_color = resize_color(th.atleast_1d(to_tensor(background_color)), num_channels)
+    color_var, color_var_const = to_tensor_and_const(color_variation)
+
+    grid_size = 1 << octave
+    num_patches = grid_size * grid_size * 2
+
+    # Mode switch
+    mode_color = num_channels > 1
+
+    ## For Make It Tile Patch Grayscale nodes, background color is replaced by color variation
+    ## This is a bug in Substance Designer that still hasn't been fixed as of today
+    if not mode_color:
+        background_color = resize_color(color_var.clamp(0.0, 1.0).unsqueeze(0), num_channels)
+
+    # Gaussian pattern (44.8 accounts for the 1.4x pattern size)
+    x = th.linspace(-31 / 44.8, 31 / 44.8, 32).expand(32, 32)
+    x = x ** 2 + x.T ** 2
+    img_gs = th.exp(x / -0.09).expand(1, 1, 32, 32)
+    img_gs = automatic_resize(img_gs, int(math.log2(img_in.shape[2])) - 5)
+    img_gs = levels(img_gs, 1.0 - mask_size, 0.5, 1 - mask_precision * mask_size)
+
+    # Add alpha channel
+    if mask_warping_const != 0.0:
+        img_in_gc = c2g(img_in, rgba_weights=[0.3, 0.59, 0.11, 0.0]) if mode_color else img_in
+        img_a = d_blur(img_in_gc, intensity=1.6)
+        img_a = d_blur(img_a, intensity=1.6, angle=0.125)
+        img_a = d_blur(img_a, intensity=1.6, angle=0.25)
+        img_a = d_blur(img_a, intensity=1.6, angle=0.875)
+        img_a = warp(img_gs, img_a, mask_warping * 0.05)
+    else:
+        img_a = img_gs
+
+    img_patch = img_in.narrow(1, 0, 3) if mode_color else img_in.expand(-1, 3, -1, -1)
+    img_patch = th.cat([img_patch, img_a], dim=1)
+
+    # Sample random color, scale, translation, and rotation variations among patches
+    colors = th.ones(1, 3)
+    offsets = th.zeros(1, 2)
+    sizes = th.stack((pattern_w, pattern_h)).unsqueeze(0)
+    rotations = rotation.view(1, 1)
+    color_rands, offset_rands, size_rands_1, size_rands_2, rotation_rands = \
+        th.rand(num_patches, 7).split((3, 1, 1, 1, 1), dim=1)
+
+    if color_var_const:
+        colors = th.clamp(colors - color_rands * color_var, 0.0, 1.0)
+    if disorder_const:
+        angles = offset_rands * 6.28
+        offsets = disorder * th.cat((th.cos(angles), th.sin(angles)), dim=1)
+    if size_var_const:
+        sizes = (size_rands_1 - size_rands_2) * size_var + sizes
+    if rotation_var_const:
+        rotations = rotation_rands * rotation_var + rotations
+
+    # Calculate transformations from the global space to the patch space
+    sizes = sizes / grid_size
+    rotations = rotations * (math.pi * 2.0)
+    cos_rot, sin_rot = th.cos(rotations), th.sin(rotations)
+
+    ## Rotation and scaling matrices
+    R = th.cat((cos_rot, -sin_rot, sin_rot, cos_rot), dim=1).view(-1, 2, 2)
+    M_inv_t = R / sizes.unsqueeze(1)
+    M_inv_t_flat = M_inv_t.flatten(1)
+
+    # Calculate patch birth positions at an FX-map level
+    def get_pattern_pos(depth: int) -> th.Tensor:
+        pos = np.full((1, 2), 0.5, dtype=np.float32)
+        offsets = np.array([[-1, -1], [1, -1], [-1, 1], [1, 1]], dtype=np.float32) * 0.25
+        for _ in range(depth):
+            pos = (np.expand_dims(pos, 1) + offsets).reshape(-1, 2)
+            offsets *= 0.5
+        return to_tensor(pos)
+
+    ## Translation vectors
+    pos = get_pattern_pos(octave)
+    offsets = 0.5 - (pos.repeat_interleave(2, dim=0) + offsets) % 1
+
+    # Generate the background image
+    fx_map = uniform_color(res_h=num_rows, res_w=num_cols, use_alpha=True, rgba=background_color)
+
+    # Generate each patch, transform it, and apply it to the background image
+    zeros = th.zeros(4)
+
+    for i in range(num_patches):
+
+        # Generate a transformed patch
+        matrix22 = M_inv_t_flat[i] if M_inv_t_flat.shape[0] > 1 else M_inv_t_flat.squeeze(0)
+        offset = offsets[i] if offsets.shape[0] > 1 else offsets.squeeze(0)
+        img_patch_i = transform_2d(img_patch, tiling=0, matrix22=matrix22, matte_color=zeros)
+        img_patch_i = transform_2d(img_patch_i, offset=offset)
+
+        # Apply color variation
+        color = colors[i] if colors.shape[0] > 1 else colors.squeeze(0)
+        img_patch_i[:,:3] *= color.view(-1, 1, 1)
+
+        # Deposit the patch onto the background image
+        fx_map = blend(img_patch_i, fx_map)
+
+    # Output channel conversion (if needed)
+    img_out = resize_image_color(fx_map, num_channels) if mode_color else c2g(fx_map)
+
+    return img_out
+
+
+@input_check(1)
+def make_it_tile_photo(img_in: th.Tensor, mask_warping_x: FloatValue = 0.0,
+                       mask_warping_y: FloatValue = 0.0, mask_size_x: FloatValue = 0.1,
+                       mask_size_y: FloatValue = 0.1, mask_precision_x: FloatValue = 0.5,
+                       mask_precision_y: FloatValue = 0.5) -> th.Tensor:
+    """Non-atomic node: Make it Tile Photo (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        mask_warping_x (float, optional): Warping intensity on the X-axis. Defaults to 0.0.
+        mask_warping_y (float, optional): Warping intensity on the Y-axis. Defaults to 0.0.
+        mask_size_x (float, optional): Width of the transition edge. Defaults to 0.1.
+        mask_size_y (float, optional): Height of the transition edge. Defaults to 0.1.
+        mask_precision_x (float, optional): Smoothness of the horizontal transition.
+            Defaults to 0.5.
+        mask_precision_y (float, optional): Smoothness of the vertical transition.
+            Defaults to 0.5.
+
+    Returns:
+        Tensor: Image with fixed tiling behavior.
+    """
+    # Convert parameters to tensors
+    mask_warping_x, mask_warping_x_const = to_tensor_and_const(mask_warping_x)
+    mask_warping_y, mask_warping_y_const = to_tensor_and_const(mask_warping_y)
+    mask_size_x = to_tensor(mask_size_x)
+    mask_size_y = to_tensor(mask_size_y)
+    mask_precision_x = to_tensor(mask_precision_x)
+    mask_precision_y = to_tensor(mask_precision_y)
+
+    # Split channels
+    num_channels = img_in.shape[1]
+    img_gs = c2g(img_in.narrow(1, 0, 3)) if num_channels >= 3 else img_in
+
+    # Create pyramid pattern
+    res = img_in.shape[2]
+    vec_grad = th.linspace(1 / res - 1, 1 - 1 / res, res).abs()
+    img_grad_x = vec_grad.unsqueeze(1)
+    img_grad_y = vec_grad.unsqueeze(0)
+    img_pyramid = th.clamp_max((1.0 - th.max(img_grad_x, img_grad_y)) * 7.39, 1.0)
+    img_pyramid = img_pyramid.expand(1, 1, -1, -1)
+
+    # Create cross mask
+    img_grad = 1.0 - vec_grad ** 2
+    img_grad_x = img_grad.unsqueeze(1).expand(1, 1, res, res)
+    img_grad_y = img_grad.unsqueeze(0).expand(1, 1, res, res)
+    img_grad_x = levels(img_grad_x, 1.0 - mask_size_x, 0.5, 1.0 - mask_size_x * mask_precision_x)
+    img_grad_y = levels(img_grad_y, 1.0 - mask_size_y, 0.5, 1.0 - mask_size_y * mask_precision_y)
+
+    img_gs = blur_hq(img_gs.view(1, 1, res, res), intensity=2.75)
+    if mask_warping_x_const != 0:
+        img_grad_x = d_warp(img_grad_x, img_gs, intensity=mask_warping_x, angle=0.25)
+        img_grad_x = d_warp(img_grad_x, img_gs, intensity=mask_warping_x, angle=-0.25)
+    if mask_warping_y_const != 0:
+        img_grad_y = d_warp(img_grad_y, img_gs, intensity=mask_warping_y)
+        img_grad_y = d_warp(img_grad_y, img_gs, intensity=mask_warping_y, angle=0.5)
+
+    img_cross = (img_pyramid * th.max(img_grad_x, img_grad_y)).clamp(0.0, 1.0)
+
+    # Create sphere mask
+    img_grad = vec_grad ** 2 * 16
+    img_grad = th.clamp_min(1.0 - img_grad.unsqueeze(0) - img_grad.unsqueeze(1), 0.0)
+    img_sphere = (img_grad.roll(res >> 1, 0) + img_grad.roll(res >> 1, 1)).expand(1, 1, -1, -1)
+    img_sphere = warp(img_sphere, img_gs, 0.24)
+
+    # Fix tiling for an image
+    img = th.lerp(img_in.roll((res >> 1, res >> 1), dims=(2, 3)), img_in, img_cross)
+    img_bg = img.roll((res >> 1, res >> 1), dims=(2, 3))
+    img_fg = img.roll((-(res >> 2), -(res >> 2)), dims=(2, 3)) if res >= 4 else \
+             transform_2d(img, offset=[0.25, 0.25])
+    img_out = th.lerp(img_bg, img_fg, img_sphere)
+
+    return img_out
+
+
+@input_check(1, channel_specs='c')
+def replace_color(img_in: th.Tensor, source_color: FloatVector = [0.5, 0.5, 0.5],
+                  target_color: FloatVector = [0.5, 0.5, 0.5]) -> th.Tensor:
+    """Non-atomic node: Replace Color
+
+    Args:
+        img_in (tensor): Input image (RGB(A) only).
+        source_color (list, optional): Color to start hue shifting from.
+            Defaults to [0.5, 0.5, 0.5].
+        target_color (list, optional): Color where hue shifting ends.
+            Defaults to [0.5, 0.5, 0.5].
+
+    Returns:
+        Tensor: Replaced color image.
+    """
+    # Convert source colors to HSL
+    target_hsl = rgb2hsl(target_color)
+    source_hsl = rgb2hsl(source_color)
+
+    # Apply HSL difference to the input image
+    diff_hsl = (target_hsl - source_hsl) * 0.5 + 0.5
+    img_out = hsl(img_in, *diff_hsl.unbind())
+
+    return img_out
+
+
+def normal_color(normal_format: str = 'dx', num_imgs: int = 1, res_h: int = 512, res_w: int = 512,
+                 use_alpha: bool = False, direction: FloatValue = 0.0,
+                 slope_angle: FloatValue = 0.0) -> th.Tensor:
+    """Non-atomic node: Normal Color
+
+    Args:
+        normal_format (str, optional): Normal format ('dx' | 'gl'). Defaults to 'dx'.
+        num_imgs (int, optional): Batch size. Defaults to 1.
+        res_h (int, optional): Resolution in height. Defaults to 512.
+        res_w (int, optional): Resolution in width. Defaults to 512.
+        use_alpha (bool, optional): Enable the alpha channel. Defaults to False.
+        direction (float, optional): Normal direction (in turning number). Defaults to 0.0.
+        slope_angle (float, optional): Normal slope angle (in turning number). Defaults to 0.0.
+
+    Returns:
+        Tensor: Uniform normal color image.
+    """
+    # Check input validity
+    check_arg_choice(normal_format, ['dx', 'gl'], arg_name='normal_format')
+
+    # Convert parameters to tensors (turns to radians)
+    dir_angle = to_tensor(direction) * (math.pi * 2)
+    slope_angle = to_tensor(slope_angle) * (math.pi * 2)
+
+    # Calculate normal color and expand into an image
+    cos_angle = -th.cos(dir_angle)
+    sin_angle = th.sin(dir_angle if normal_format == 'gl' else -dir_angle)
+    vec = th.stack([cos_angle, sin_angle]) * th.sin(slope_angle) * 0.5 + 0.5
+    rgba = th.cat([vec, th.ones(2)])
+    img_out = uniform_color(
+        num_imgs=num_imgs, res_h=res_h, res_w=res_w, use_alpha=use_alpha, rgba=rgba)
+
+    return img_out
+
+
+@input_check(2, channel_specs='.c')
+def vector_morph(img_in: th.Tensor, vector_field: Optional[th.Tensor] = None,
+                 amount: FloatValue = 1.0) -> th.Tensor:
+    """Non-atomic node: Vector Morph (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        vector_field (tensor, optional): Vector map that drives warping. Defaults to None.
+        amount (float, optional): Normalized warping intensity as a multiplier for the vector map.
+            Defaults to 1.0.
+
+    Returns:
+        Tensor: Warped image.
+    """
+    # Resize vector field input to only use the first two channels
+    num_channels = img_in.shape[1]
+    if vector_field is None:
+        vector_field = img_in.expand(-1, 2, -1, -1) if num_channels == 1 else img_in[:,:2]
+    else:
+        vector_field = vector_field[:,:2]
+
+    # Convert parameters to tensors
+    amount, amount_const = to_tensor_and_const(amount)
+
+    # Special case - no effect when the amount is zero
+    if amount_const == 0.0:
+        return img_in
+
+    # Progressive vector field sampling
+    res_h, res_w = img_in.shape[2], img_in.shape[3]
+    sample_grid = get_pos(res_h, res_w).unsqueeze(0)
+
+    vector_field_pad = pad2d(vector_field, 1)
+    size_scales = to_tensor([res_w / (res_w + 2), res_h / (res_h + 2)])
+
+    for i in range(16):
+        if i == 0:
+            vec = vector_field
+        else:
+            sample_grid_sp = (sample_grid * 2.0 - 1.0) * size_scales
+            vec = grid_sample_impl(vector_field_pad, sample_grid_sp, align_corners=False)
+        sample_grid = (sample_grid + (vec.movedim(1, 3) - 0.5) * (amount * 0.0625)) % 1
+
+    # Final image sampling
+    sample_grid = (sample_grid * 2.0 - 1.0) * size_scales
+    img_out = grid_sample_impl(pad2d(img_in, 1), sample_grid, align_corners=False)
+
+    return img_out
+
+
+@input_check(2, channel_specs='.c')
+def vector_warp(img_in: th.Tensor, vector_map: Optional[th.Tensor] = None,
+                vector_format: str = 'dx', intensity: FloatValue = 1.0) -> th.Tensor:
+    """Non-atomic node: Vector Warp (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        vector_map (tensor, optional): Distortion driver map (RGB(A) only). Defaults to None.
+        vector_format (str, optional): Normal format of the vector map ('dx' | 'gl').
+            Defaults to 'dx'.
+        intensity (float, optional): Normalized intensity multiplier of the vector map.
+            Defaults to 1.0.
+
+    Returns:
+        Tensor: Distorted image.
+    """
+    # Check input validity
+    check_arg_choice(vector_format, ['dx', 'gl'], arg_name='vector_format')
+
+    # Resize vector map input to only use the first two channels
+    num_channels = img_in.shape[1]
+    if vector_map is None:
+        vector_map = img_in.expand(-1, 2, -1, -1) if num_channels == 1 else img_in[:,:2]
+    else:
+        vector_map = vector_map[:,:2]
+
+    # Convert parameters to tensors
+    intensity, intensity_const = to_tensor_and_const(intensity)
+
+    # Special case - no effect when intensity is zero
+    if intensity_const == 0.0:
+        return img_in
+
+    # Calculate displacement field
+    vector_map = vector_map * 2.0 - 1.0
+    if vector_format == 'gl':
+        vector_map.select(1, 1).neg_()
+    vector_map = vector_map * th.norm(vector_map, dim=1, keepdim=True) * intensity
+
+    # Sample input image
+    res_h, res_w = img_in.shape[2], img_in.shape[3]
+    sample_grid = get_pos(res_h, res_w).unsqueeze(0) + vector_map.movedim(1, 3)
+    img_out = grid_sample(img_in, sample_grid, sbs_format=True)
+
+    return img_out
+
+
+@input_check(1)
+def contrast_luminosity(img_in: th.Tensor, contrast: FloatValue = 0.0,
+                        luminosity: FloatValue = 0.0) -> th.Tensor:
+    """Non-atomic node: Contrast/Luminosity (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        contrast (float, optional): Contrast of the result. Defaults to 0.0.
+        luminosity (float, optional): Brightness of the result. Defaults to 0.0.
+
+    Returns:
+        Tensor: Adjusted image.
+    """
+    # Process input parameters
+    contrast, luminosity = to_tensor(contrast), to_tensor(luminosity)
+
+    # Perform histogram adjustment
+    in_low = th.clamp(contrast * 0.5, 0.0, 0.5)
+    in_high = th.clamp(1.0 - contrast * 0.5, 0.5, 1.0)
+
+    contrast_half = th.abs(contrast.clamp_max(0.0)) * 0.5
+    out_low = th.clamp(contrast_half + luminosity, 0.0, 1.0)
+    out_high = th.clamp(luminosity + 1.0 - contrast_half, 0.0, 1.0)
+
+    img_out = levels(img_in, in_low=in_low, in_high=in_high, out_low=out_low, out_high=out_high)
+
+    return img_out
+
+
+@input_check(1, channel_specs='c')
+def p2s(img_in: th.Tensor) -> th.Tensor:
+    """Non-atomic node: Pre-Multiplied to Straight
+
+    Args:
+        img_in (tensor): Image with pre-multiplied color (RGB(A) only).
+
+    Returns:
+        Tensor: Image with straight color.
+    """
+    # Split alpha from input
+    rgb, a = img_in.split(3, dim=1) if img_in.shape[1] == 4 else (img_in, None)
+    img_out = th.cat(((rgb / (a + 1e-15)).clamp(0.0, 1.0), a), dim=1) if a is not None else rgb
+
+    return img_out
+
+
+@input_check(1, channel_specs='c')
+def s2p(img_in: th.Tensor) -> th.Tensor:
+    """Non-atomic node: Straight to Pre-Multiplied
+
+    Args:
+        img_in (tensor): Image with straight color (RGB(A) only).
+
+    Returns:
+        Tensor: Image with pre-multiplied color.
+    """
+    # Split alpha from input
+    rgb, a = img_in.split(3, dim=1) if img_in.shape[1] == 4 else (img_in, None)
+    img_out = th.cat((rgb * a, a), dim=1) if a is not None else rgb
+
+    return img_out
+
+
+@input_check(1)
+def clamp(img_in: th.Tensor, clamp_alpha: bool = True, low: FloatValue = 0.0,
+          high: FloatValue = 1.0) -> th.Tensor:
+    """Non-atomic node: Clamp (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        clamp_alpha (bool, optional): Clamp the alpha channel. Defaults to True.
+        low (float, optional): Lower clamp limit. Defaults to 0.0.
+        high (float, optional): Upper clamp limit. Defaults to 1.0.
+
+    Returns:
+        Tensor: Clamped image.
+    """
+    # Convert parameters to tensors
+    low, high = to_tensor(low).clamp(0.0, 1.0), to_tensor(high).clamp(0.0, 1.0)
+
+    # Split alpha from input if alpha isn't clamped
+    if img_in.shape[1] == 4 and not clamp_alpha:
+        img_rgb, img_a = img_in.split(3, dim=1)
+        img_out = th.cat((img_rgb.clamp(low, high), img_a), dim=1)
+
+    # Clamp all channels
+    else:
+        img_out = img_in.clamp(low, high)
+
+    return img_out
+
+
+@input_check(1)
+def pow(img_in: th.Tensor, exponent: FloatValue = 4.0) -> th.Tensor:
+    """Non-atomic node: Pow (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        exponent (float, optional): Normalized exponent of the power function. Defaults to 4.0.
+
+    Returns:
+        Tensor: Powered image.
+    """
+    # Convert parameters to tensors
+    exponent, exponent_const = to_tensor_and_const(exponent)
+
+    # Split alpha from input
+    img_in, img_in_alpha = img_in.split(3, dim=1) if img_in.shape[1] == 4 else (img_in, None)
+
+    # Gamma correction
+    in_mid = (exponent - 1.0) / 16.0 + 0.5 if exponent_const >= 1.0 else \
+             0.5625 if exponent_const == 0 else (1.0 / exponent - 9.0) / -16.0
+    img_out = levels(img_in, in_mid=in_mid)
+
+    # Attach the original alpha channel
+    img_out = th.cat([img_out, img_in_alpha], dim=1) if img_in_alpha is not None else img_out
+
+    return img_out
+
+
+@input_check(1)
+def quantize(img_in: th.Tensor, grayscale_flag: bool = False, quantize_gray: int = 3,
+             quantize_r: int = 4, quantize_g: int = 4, quantize_b: int = 4,
+             quantize_alpha: int = 4) -> th.Tensor:
+    """Non-atomic node: Quantize (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        quantize_number (int or list, optional): Number of quantization steps (a list input
+            controls each channel separately). Defaults to 3.
+
+    Returns:
+        Tensor: Quantized image.
+    """
+    # Distinguish between color mode and grayscale mode
+    if grayscale_flag:
+        quantize_number = quantize_gray
+        grayscale_input_check(img_in, 'img_in')
+    else:
+        quantize_number = [quantize_r, quantize_g, quantize_b, quantize_alpha]
+        color_input_check(img_in, 'img_in')
+
+    # Per-channel quantization
+    qn = (to_tensor(quantize_number) - 1) / 255.0
+    qt_shift = 1.0 - 286.0 / 512.0
+    img_in = levels(img_in, out_high=qn)
+    img_qt = th.floor(img_in * 255.0 + qt_shift) / 255.0
+    img_out = levels(img_qt, in_high=qn)
+
+    return img_out
+
+
+@input_check(1)
+def anisotropic_blur(img_in: th.Tensor, high_quality: bool = False, intensity: FloatValue = 10.0,
+                     anisotropy: FloatValue = 0.5, angle: FloatValue = 0.0) -> th.Tensor:
+    """Non-atomic node: Anisotropic Blur (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        high_quality (bool, optional): Switch between a box blur (False) and an HQ blur (True)
+            internally. Defaults to False.
+        intensity (float, optional): Directional blur intensity. Defaults to 10.0.
+        anisotropy (float, optional): Directionality of the blur. Defaults to 0.5.
+        angle (float, optional): Angle of the blur direction (in turning number). Defaults to 0.0.
+
+    Returns:
+        Tensor: Anisotropically blurred image.
+    """
+    # Convert parameters to tensors
+    intensity, anisotropy = to_tensor(intensity), to_tensor(anisotropy)
+    angle = to_tensor(angle)
+
+    # Two-pass directional blur
+    quality_factor = 0.6 if high_quality else 1.0
+    img_out = d_blur(img_in, intensity * quality_factor, angle)
+    img_out = d_blur(img_out, intensity * (1.0 - anisotropy) * quality_factor, angle + 0.25)
+    if high_quality:
+        img_out = d_blur(img_out, intensity * quality_factor, angle)
+        img_out = d_blur(img_out, intensity * (1.0 - anisotropy) * quality_factor, angle + 0.25)
+
+    return img_out
+
+
+@input_check(1)
+def glow(img_in: th.Tensor, glow_amount: FloatValue = 0.5, clear_amount: FloatValue = 0.5,
+         size: FloatValue = 10.0, color: FloatVector = [1.0, 1.0, 1.0, 1.0]) -> th.Tensor:
+    """Non-atomic node: Glow (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        glow_amount (float, optional): Global opacity of the glow effect. Defaults to 0.5.
+        clear_amount (float, optional): Cut-off threshold of the glow effect. Defaults to 0.5.
+        size (float, optional): Scale of the glow effect. Defaults to 10.0.
+        color (list, optional): Color of the glow effect. Defaults to [1.0, 1.0, 1.0, 1.0].
+
+    Returns:
+        Tensor: Image with the glow effect.
+    """
+    # Convert parameters to tensors
+    glow_amount, clear_amount = to_tensor(glow_amount), to_tensor(clear_amount)
+    size, color = to_tensor(size), to_tensor(color)
+
+    # Calculate glow mask
+    num_channels = img_in.shape[1]
+    img_mask = (img_in[:,:3] * 0.33).sum(dim=1, keepdim=True) if num_channels > 1 else img_in
+    img_mask = levels(img_mask, in_low = clear_amount - 0.01, in_high = clear_amount + 0.01)
+    img_mask = blur_hq(img_mask, intensity=size)
+
+    # Apply glow effect to input
+    if num_channels > 1:
+        img_mask = (img_mask * glow_amount).clamp(0.0, 1.0)
+        img_out = blend(color[:num_channels].view(-1, 1, 1).expand_as(img_in), img_in, img_mask,
+                        blending_mode='add')
+    else:
+        img_out = blend(img_mask, img_in, blending_mode='add', opacity=glow_amount)
+
+    return img_out
+
+
+@input_check(1)
+def car2pol(img_in: th.Tensor) -> th.Tensor:
+    """Non-atomic node: Cartesian to Polar (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image in Cartesian coordinates (G or RGB(A)).
+
+    Returns:
+        Tensor: Image in polar coordinates.
+    """
+    # Generate an initial sampling grid (pixel centers)
+    res_h, res_w = img_in.shape[2], img_in.shape[3]
+    sample_grid = get_pos(res_h, res_w) - 0.5
+
+    # Convert Cartesian to polar coordinates
+    radii = th.norm(sample_grid, dim=-1, keepdim=True) * 2.0 % 1.0
+    angles = -th.atan2(sample_grid[...,1:], sample_grid[...,:1]) / (math.pi * 2) % 1.0
+    sample_grid = th.cat((angles, radii), dim=-1).unsqueeze(0)
+
+    # Sample the input image
+    img_out = grid_sample(img_in, sample_grid, sbs_format=True)
+
+    return img_out
+
+
+@input_check(1)
+def pol2car(img_in: th.Tensor) -> th.Tensor:
+    """Non-atomic node: Polar to Cartesian (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Image in polar coordinates (G or RGB(A)).
+
+    Returns:
+        Tensor: Image in Cartesian coordinates.
+    """
+    # Generate an initial sampling grid (pixel centers)
+    res_h, res_w = img_in.shape[2], img_in.shape[3]
+    sample_grid = get_pos(res_h, res_w)
+
+    # Convert polar coordinates to Cartesian
+    angles, radii = sample_grid.unbind(dim=2)
+    angles, radii = angles * (-math.pi * 2.0), radii * 0.5
+    sample_grid = th.stack((th.cos(angles), th.sin(angles)), dim=2) * radii.unsqueeze(2) + 0.5
+
+    # Sample the input image
+    img_out = grid_sample(img_in, sample_grid.unsqueeze(0), sbs_format=True)
+
+    return img_out
+
+
+@input_check(1, channel_specs='g')
+def normal_sobel(img_in: th.Tensor, normal_format: str = 'dx', use_alpha: bool = False,
+                 intensity: FloatValue = 1.0) -> th.Tensor:
+    """Non-atomic node: Normal Sobel
+
+    Args:
+        img_in (tensor): Input height map (G only).
+        normal_format (str, optional): Input normal format. Defaults to 'dx'.
+        use_alpha (bool, optional): Output alpha channel. Defaults to False.
+        intensity (float, optional): Normal intensity. Defaults to 1.0.
+
+    Returns:
+        Tensor: Output normal map.
+    """
+    # Check input validity
+    check_arg_choice(normal_format, ['dx', 'gl'], arg_name='normal_format')
+
+    # Pre-compute scale multipliers
+    intensity = to_tensor(intensity)
+    res_h, res_w = img_in.shape[2], img_in.shape[3]
+    mult_x = intensity * (res_w / 512.0)
+    mult_y = intensity * (res_h / 512.0 * (-1 if normal_format == 'dx' else 1))
+
+    # Pre-blur the input image
+    img_blur_x = d_blur(img_in, intensity=256 / res_w)
+    img_blur_y = d_blur(img_in, intensity=256 / res_h, angle=0.25)
+
+    # Compute normal
+    normal_x = (th.roll(img_blur_y, 1, 3) - th.roll(img_blur_y, -1, 3)) * mult_x
+    normal_y = (th.roll(img_blur_x, -1, 2) - th.roll(img_blur_x, 1, 2)) * mult_y
+    normal = th.cat((normal_x, normal_y, th.ones_like(normal_x)), dim=1)
+    img_normal = th.clamp((normal * 0.5 / normal.norm(dim=1, keepdim=True)) + 0.5, 0.0, 1.0)
+
+    # Add output alpha channel
+    if use_alpha:
+        img_normal = th.cat((img_normal, th.ones_like(normal_x)), dim=1)
+
+    return img_normal
+
+
+@input_check(2, channel_specs='cg')
+def normal_vector_rotation(img_in: th.Tensor, img_map: Optional[th.Tensor] = None,
+                           normal_format: str = 'dx', rotation: FloatValue = 0.0) -> th.Tensor:
+    """Non-atomic node: Normal Vector Rotation
+
+    Args:
+        img_in (tensor): Input normal map (RGB(A) only).
+        img_map (tensor, optional): Rotation map (G only). Defaults to 'None'.
+        normal_format (str, optional): Input normal format ('dx' or 'gl'). Defaults to 'dx'.
+        rotation (float, optional): Normal vector rotation angle. Defaults to 0.0.
+
+    Returns:
+        Tensor: Output normal map.
+    """
+    # Check input validity
+    check_arg_choice(normal_format, ['dx', 'gl'], arg_name='normal_format')
+
+    # Substitute empty input to rotation map by zeros
+    if img_map is None:
+        img_map = th.zeros(1, 1, img_in.shape[2], img_in.shape[3])
+
+    # Rotate normal vector map
+    nx, ny, nzw = img_in.tensor_split((1, 2), dim=1)
+    nx = nx * 2 - 1
+    ny = 1 - ny * 2 if normal_format == 'dx' else ny * 2 - 1
+
+    rotation = to_tensor(rotation)
+    angle_rad_map = (img_map + rotation) * (math.pi * 2.0)
+    cos_angle, sin_angle = th.cos(angle_rad_map), th.sin(angle_rad_map)
+
+    nx_rot = nx * cos_angle + ny * sin_angle
+    ny_rot = ny * cos_angle - nx * sin_angle
+    nx_rot = nx_rot * 0.5 + 0.5
+    ny_rot = 0.5 - ny_rot * 0.5 if normal_format == 'dx' else ny_rot * 0.5 + 0.5
+
+    # Merge rotated normal components
+    img_out = th.cat((nx_rot, ny_rot, nzw), dim=1)
+
+    return img_out
+
+
+@input_check(1)
+def non_square_transform(img_in: th.Tensor, tiling: int = 3, tile_mode: str = 'automatic',
+                         tile: Tuple[int, int] = [1,1], tile_safe_rotation: bool = True,
+                         offset: FloatVector = [0.0, 0.0], rotation: FloatValue = 0.0,
+                         background_color: FloatVector = [0.0, 0.0, 0.0, 1.0]) -> th.Tensor:
+    """Non-atomic node: Non-Square Transform (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        tiling (int, optional): Output tiling (see function 'transform_2d'). Defaults to 3.
+        tile_mode (str, optional): Tiling mode control ('automatic' or 'manual').
+            Defaults to 'automatic'.
+        tile (int, optional): Tiling in [X, Y] direction (if tile_mode is 'manual').
+            Defaults to [1, 1].
+        tile_safe_rotation (bool, optional): Snaps to safe values to maintain sharpness of pixels.
+            Defaults to True.
+        offset (float, optional): [X, Y] translation offset. Defaults to 0.0, 0.0.
+        rotation (float, optional): Image rotation angle. Defaults to 0.0.
+        background_color (list, optional): Background color when tiling is disabled. Defaults to
+            [0.0, 0.0, 0.0, 1.0].
+
+    Returns:
+        Tensor: Transformed image.
+    """
+    # Check input validity
+    check_arg_choice(tile_mode, ['automatic', 'manual'], arg_name='tile_mode')
+
+    # Convert parameters to tensors
+    offset, rotation = to_tensor(offset), to_tensor(rotation)
+    background_color = to_tensor(background_color).view(-1)
+    background_color = resize_color(background_color, img_in.shape[1])
+
+    # Compute rotation angle
+    angle_trunc = th.floor(rotation * 4) * 0.25
+    angle = angle_trunc if tile_safe_rotation else rotation
+    angle_rad = angle * (math.pi * 2.0)
+
+    # Compute scaling factors
+    res_h, res_w = img_in.shape[2], img_in.shape[3]
+    angle_remainder_rad = angle_trunc.abs() % 0.25 * (math.pi * 2.0)
+
+    if tile_mode == 'manual':
+        rotation_scale = th.cos(angle_remainder_rad) + th.sin(angle_remainder_rad) \
+                         if tile_safe_rotation else 1.0
+        x_scale = tile[0] * min(res_w / res_h, 1.0) * rotation_scale
+        y_scale = tile[1] * min(res_h / res_w, 1.0) * rotation_scale
+    else:
+        x_scale = max(res_w / res_h, 1.0)
+        y_scale = max(res_h / res_w, 1.0)
+
+    # Compute transform matrix
+    x1, x2 = x_scale * th.cos(angle_rad), x_scale * -th.sin(angle_rad)
+    y1, y2 = y_scale * th.sin(angle_rad), y_scale * th.cos(angle_rad)
+    matrix22 = th.stack((x1, x2, y1, y2))
+
+    # Compute translation offset
+    img_res = to_tensor([res_w, res_h])
+    offset = th.floor((offset - 0.5) * img_res) / img_res + 0.5
+
+    # Initiate 2D transformation
+    img_out = transform_2d(img_in, tiling=tiling, mipmap_mode='manual', matrix22=matrix22,
+                           offset=offset, matte_color=background_color)
+
+    return img_out
+
+
+@input_check(1)
+def quad_transform(img_in: th.Tensor, culling: str = 'f-b', enable_tiling: bool = False,
+                   sampling: str = 'bilinear', p00: FloatVector = [0.0, 0.0],
+                   p01: FloatVector = [0.0, 1.0], p10: FloatVector = [1.0, 0.0],
+                   p11: FloatVector = [1.0, 1.0],
+                   background_color: FloatVector = [0.0, 0.0, 0.0, 1.0]) -> th.Tensor:
+    """Non-atomic node: Quad Transform (Color and Grayscale)
+
+    Args:
+        img_in (tensor): Input image.
+        culling (str, optional): Set culling/hiding of shape when points cross over each other.
+            [Options]
+                - 'f': front only.
+                - 'b': back only.
+                - 'f-b': front over back.
+                - 'b-f': back over front.
+            Defaults to 'f-b'.
+        enable_tiling (bool, optional): Enable tiling. Defaults to False.
+        sampling (str, optional): Set sampling quality ('bilinear' or 'nearest').
+            Defaults to 'bilinear'.
+        p00 (list, optional): Top left point. Defaults to [0.0, 0.0].
+        p01 (list, optional): Bottom left point. Defaults to [0.0, 1.0].
+        p10 (list, optional): Top right point. Defaults to [1.0, 0.0].
+        p11 (list, optional): Bottom right point. Defaults to [1.0, 1.0].
+        background_color (list, optional): Solid background color if tiling is off.
+            Defaults to [0.0, 0.0, 0.0, 1.0].
+
+    Returns:
+        Tensor: Transformed image.
+    """
+    # Check input validity
+    check_arg_choice(culling, ['f', 'b', 'f-b', 'b-f'], arg_name='culling')
+    check_arg_choice(sampling, ['bilinear', 'nearest'], arg_name='sampling')
+
+    # Convert parameters to tensors
+    p00, p01, p10, p11 = to_tensor(p00), to_tensor(p01), to_tensor(p10), to_tensor(p11)
+    background_color = to_tensor(background_color).view(-1)
+    background_color = resize_color(background_color, img_in.shape[1])
+
+    # Compute a few derived (or renamed) values
+    b, c, a = p01 - p00, p10 - p00, p11 - p01
+    d = a - c
+    x2_1, x2_2 = cross_2d(c, d), cross_2d(b, d)
+    x1_a, x1_b = cross_2d(b, c), d
+    p0, x0_1, x0_2 = p00, b, c
+    enable_2sided = len(culling) > 1 and not enable_tiling
+    front_first = culling.startswith('f')
+
+    # Solve quadratic equations
+    res_h, res_w = img_in.shape[2], img_in.shape[3]
+    pos_offset = p0 - get_pos(res_h, res_w)
+    x1_b = cross_2d(pos_offset, x1_b)
+    x0_1 = cross_2d(pos_offset, x0_1)
+    x0_2 = cross_2d(pos_offset, x0_2)
+    qx1, qy1, error1 = solve_poly_2d(x2_1, x1_b - x1_a, x0_1)
+    qx2, qy2, error2 = solve_poly_2d(x2_2, x1_b + x1_a, x0_2)
+
+    # Compute sampling positions
+    sample_pos_ff = th.stack((qx1, qy2), dim=2)
+    sample_pos_bf = th.stack((qy1, qx2), dim=2)
+    in_01_ff = th.all((sample_pos_ff >= 0) & (sample_pos_ff <= 1), dim=2)
+    in_01_bf = th.all((sample_pos_bf >= 0) & (sample_pos_bf <= 1), dim=2)
+
+    # Determine which face is being considered
+    cond_face = th.as_tensor((in_01_ff if front_first else ~in_01_bf) \
+                             if enable_2sided else front_first)
+    in_01 = th.where(cond_face, in_01_ff, in_01_bf)
+    sample_pos = th.where(cond_face.unsqueeze(-1), sample_pos_ff, sample_pos_bf)
+
+    # Perform sampling
+    sample_pos = (sample_pos % 1.0).expand(img_in.shape[0], res_h, res_w, 2)
+    img_sample = grid_sample(img_in, sample_pos, sbs_format=True)
+
+    # Apply sampling result on background color
+    img_bg = background_color.view(-1, 1, 1)
+    cond = error1 | error2 | ~(in_01 | enable_tiling)
+    img_out = th.where(cond, img_bg, img_sample)
 
     return img_out
 
@@ -2394,5 +4383,512 @@ def c2g_advanced(img_in: th.Tensor, grayscale_type: str = 'desaturation'):
     # Unknown mode
     else:
         raise ValueError(f'Unknown grayscale conversion mode: {grayscale_type}')
+
+    return img_out
+
+
+# ---------------------------------------------------------------------------- #
+#          Mathematical functions used in the implementation of nodes.         #
+# ---------------------------------------------------------------------------- #
+
+def cross_2d(v1: th.Tensor, v2: th.Tensor) -> th.Tensor:
+    """2D cross product function.
+
+    Args:
+        v1 (tensor): the first vector (or an array of vectors)
+        v2 (tensor): the second vector
+
+    Raises:
+        TypeError: Input v1 or v2 is not a torch tensor.
+        ValueError: Input v1 or v2 does not represent 2D vectors.
+
+    Returns:
+        Tensor: cross product(s) of v1 and v2.
+    """
+    # Check input validity
+    if not isinstance(v1, th.Tensor) or not isinstance(v2, th.Tensor):
+        raise TypeError("Input 'v1' and 'v2' must be torch tensors")
+    if v1.shape[-1] != 2 or v2.shape != (2,):
+        raise ValueError("Input 'v1' and 'v2' should both be 2D vectors")
+
+    # Compute cross product
+    v1r = v1.reshape(-1, 2)
+    ret = v1r[:, 0] * v2[1] - v1r[:, 1] * v2[0]
+    ret = ret.reshape(v1.shape[:-1])
+
+    return ret
+
+
+def solve_poly_2d(a: th.Tensor, b: th.Tensor, c: th.Tensor) -> Tuple[th.Tensor, ...]:
+    """Solve quadratic equations (ax^2 + bx + c = 0).
+
+    Args:
+        a (tensor): 2D array of value a's (M x N)
+        b (tensor): 2D array of value b's (M x N)
+        c (tensor): 2D array of value c's (M x N)
+
+    Returns:
+        Tensor: the first solutions of the equations
+        Tensor: the second solutions of the equations
+        Tensor: error flag when equations are invalid
+    """
+    # Check input validity
+    if any(not isinstance(x, th.Tensor) for x in (a, b, c)):
+        raise TypeError('All inputs must be torch tensors')
+
+    # Compute discriminant
+    delta = b * b - 4 * a * c
+    error = delta < 0
+
+    # Return solutions
+    sqrt_delta = th.sqrt(delta)
+    x_quad_1, x_quad_2 = (sqrt_delta - b) * 0.5 / a, (-sqrt_delta - b) * 0.5 / a
+    x_linear = -c / b
+    cond = (a == 0) | error
+    x1 = th.where(cond, x_linear, x_quad_1)
+    x2 = th.where(cond, x_linear, x_quad_2)
+
+    return x1, x2, error
+
+def rgb2hsl(rgb: FloatVector) -> th.Tensor:
+    """RGB to HSL.
+
+    Args:
+        rgb (list or tensor): RGB value.
+
+    Returns:
+        Tensor: HSL value.
+    """
+    # Convert input to tensor
+    rgb, rgb_const = to_tensor_and_const(rgb)
+    zero = th.zeros([])
+
+    # Compute luminance and saturation
+    max_vals, max_vals_const = th.max(rgb), max(rgb_const)
+    min_vals = th.min(rgb)
+    delta, delta_const = max_vals - min_vals, max_vals_const - min(rgb_const)
+    l = (max_vals + min_vals) * 0.5
+    s = delta / (1.0 - th.abs(2*l - 1.0)) if delta_const else zero
+
+    # Compute hue
+    if delta_const:
+        h_all = ((rgb.roll(-1) - rgb.roll(1)) / delta + th.linspace(0, 4, 3)) % 6.0 / 6.0
+        h = h_all[rgb_const.index(max_vals_const)]
+    else:
+        h = zero
+
+    return th.stack([h, s, l])
+
+
+# ------------------------------------------------------------------------------------ #
+#          Parameter adjustment functions used in the implementation of nodes.         #
+# ------------------------------------------------------------------------------------ #
+
+def resize_color(color: th.Tensor, num_channels: int, default_val: float = 1.0) -> th.Tensor:
+    """Resize color to a specified number of channels.
+
+    Args:
+        color (tensor): Input color.
+        num_channels (int): Target number of channels.
+        default_val (float, optional): Default value for the alpha channel (if used).
+            Defaults to 1.0.
+
+    Raises:
+        TypeError: Input color is not a 1-D tensor.
+        ValueError: Input channel number is outside 1-4.
+        RuntimeError: The input color cannot be resized to the target number of channels.
+
+    Returns:
+        Tensor: Resized color.
+    """
+    # Check input validity
+    if not isinstance(color, th.Tensor) or color.ndim != 1:
+        raise TypeError('Input color must be a 1-D tensor')
+    if num_channels not in range(1, 5):
+        raise ValueError(f'Number of channels must be 1-4, got {num_channels} instead')
+
+    # Match background color with image channels
+    C = len(color)
+    if C > num_channels:
+        color = color[:num_channels]
+    elif C < num_channels:
+        if C == 1 and num_channels > 1:
+            color = color.expand(min(num_channels, 3))
+        if len(color) == 3 and num_channels == 4:
+            color = th.cat((color, th.atleast_1d(to_tensor(default_val))))
+
+    # Report error if color adjustment failed
+    if len(color) != num_channels:
+        raise RuntimeError(
+            f'Input color size [{C}] cannot be resized to {num_channels} channels')
+
+    return color
+
+
+def resize_image_color(img: th.Tensor, num_channels: int, default_val: float = 1.0) -> th.Tensor:
+    """Resize the color channel of an image to a specified number.
+
+    Args:
+        color (tensor): Input image (G or RGB(A)).
+        num_channels (int): Target number of channels.
+        default_val (float, optional): Default value for the alpha channel (if used).
+            Defaults to 1.0.
+
+    Raises:
+        TypeError: Input color is not a 4-D tensor.
+        ValueError: Input channel number is outside 1-4.
+        RuntimeError: The input color cannot be resized to the target number of channels.
+
+    Returns:
+        Tensor: Image with resized color.
+    """
+    # Check input validity
+    if not isinstance(img, th.Tensor) or img.ndim != 4:
+        raise TypeError('Input image must be a 4-D tensor')
+    if num_channels not in range(1, 5):
+        raise ValueError('Number of channels must be 1-4')
+
+    # Match image with target channels
+    C = img.shape[1]
+    if C > num_channels:
+        img = img.narrow(1, 0, num_channels)
+    elif C < num_channels:
+        if C == 1 and num_channels > 1:
+            img = img.expand(-1, min(num_channels, 3), -1, -1)
+        if img.shape[1] == 3 and num_channels == 4:
+            img = th.cat((img, th.full_like(img.narrow(1, 0, 1), default_val)), dim=1)
+
+    # Report error if color adjustment failed
+    if img.shape[1] != num_channels:
+        raise RuntimeError(
+            f'Input image color size [{C}] cannot be resized to {num_channels} channels')
+
+    return img
+
+
+def resize_anchor_color(anchors: th.Tensor, num_channels: int,
+                        default_val: float = 1.0) -> th.Tensor:
+    """Resize the color channel of an anchor array to a specified number.
+
+    Args:
+        anchors (tensor): Input color anchors.
+        num_channels (int): Target number of channels.
+        default_val (float, optional): Default value for the alpha channel (if used).
+            Defaults to 1.0.
+
+    Raises:
+        TypeError: Input anchors array is not a 2-D tensor.
+        ValueError: Target channel number is outside 1-4.
+        RuntimeError: Input anchors cannot be resized to the target number of channels.
+
+    Returns:
+        Tensor: Anchors with resized color.
+    """
+    # Check input validity
+    if not isinstance(anchors, th.Tensor) or anchors.ndim != 2:
+        raise TypeError('Input anchor array must be a 2-D tensor')
+    if num_channels not in range(1, 5):
+        raise ValueError('Number of channels must be 1-4')
+
+    # Match anchor array with target channels
+    C = anchors.shape[1]
+
+    if C > num_channels + 1:
+        if C == 5 and num_channels < 4:
+            anchors = anchors[:,:4]
+        if anchors.shape[1] == 4 and num_channels == 1:
+            anchors = th.hstack((anchors[:,:1], anchors[:,1:].sum(dim=1, keepdim=True) * 0.33))
+    elif C < num_channels + 1:
+        if C == 2 and num_channels == 3:
+            anchors = th.hstack((anchors[:,:1], anchors[:,1:].expand(-1, 3)))
+        if anchors.shape[1] == 4 and num_channels == 4:
+            anchors = th.hstack((anchors, th.full_like(anchors[:,:1], default_val)))
+
+    # Report error if color channel adjustment failed
+    if anchors.shape[1] != num_channels + 1:
+        raise RuntimeError(
+            f'Input anchor color size [{C - 1}] cannot be resized to {num_channels} channels')
+
+    return anchors
+
+
+# ---------------------------------------------------------------------------------- #
+#          Image manipulation functions used in the implementation of nodes.         #
+# ---------------------------------------------------------------------------------- #
+
+def get_pos(res_h: int, res_w: int) -> th.Tensor:
+    """Get the $pos matrix of an input image (the center coordinates of each pixel).
+
+    Args:
+        res_h (int): Output image height.
+        res_w (int): Output image width.
+
+    Returns:
+        Tensor: $pos matrix (size: (H, W, 2))
+    """
+    row_coords = th.linspace(0.5 / res_h, 1 - 0.5 / res_h, res_h)
+    col_coords = th.linspace(0.5 / res_w, 1 - 0.5 / res_w, res_w)
+    pos_grid = th.stack(th.meshgrid(col_coords, row_coords, indexing='xy'), dim=2)
+
+    return pos_grid
+
+
+def create_mipmaps(img_in: th.Tensor, mipmaps_level: int,
+                   keep_size: bool = False) -> List[th.Tensor]:
+    """Create mipmap levels for an input image using box filtering.
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        mipmaps_level (int): Number of mipmap levels.
+        keep_size (bool, optional): Switch for restoring the original image size after
+            downsampling. Defaults to False.
+
+    Returns:
+        List[tensor]: Mipmap stack of the input image.
+    """
+    mipmaps = []
+    img_mm = img_in
+    last_shape = img_in.shape[2]
+
+    # Successively downsample the input image
+    for i in range(mipmaps_level):
+        img_mm = manual_resize(img_mm, -1) if img_mm.shape[2] > 1 else img_mm
+        mm_shape = img_mm.shape[2]
+
+        # Recover the original image size
+        img_mm_entry = img_mm if not keep_size else \
+                       mipmaps[-1] if last_shape == 1 else \
+                       img_mm.expand_as(img_in) if last_shape == 2 else \
+                       automatic_resize(img_mm, i + 1)
+
+        mipmaps.append(img_mm_entry)
+        last_shape = mm_shape
+
+    return mipmaps
+
+
+def frequency_transform(img_in: th.Tensor, normal_format: str = 'dx') -> List[th.Tensor]:
+    """Calculate convolution at multiple frequency levels.
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        normal_format (str, optional): Switch for inverting the vertical 1-D convolution
+            direction ('dx' | 'gl'). Defaults to 'dx'.
+
+    Returns:
+        List[List[Tensor]]: List of convoluted images (in X and Y direction respectively).
+    """
+    in_size = img_in.shape[2]
+    in_size_log2 = int(math.log2(in_size))
+
+    # Create mipmap levels for R and G channels
+    img_in = img_in[:,:2]
+    mm_list: List[th.Tensor] = [img_in]
+    if in_size_log2 > 4:
+        mm_list.extend(create_mipmaps(img_in, in_size_log2 - 4))
+
+    # Convolution operator
+    def conv(img: th.Tensor) -> th.Tensor:
+        dr = -1 if normal_format == 'dx' else 1
+        img_x, img_y = img.split(1, dim=1)
+        img_bw = img - th.cat((th.roll(img_x, 1, 3), th.roll(img_y, -dr, 2)), dim=1)
+        img_fw = th.cat((th.roll(img_x, -1, 3), th.roll(img_y, dr, 2)), dim=1) - img
+        return (img_bw.clamp(-0.5, 0.5) + img_fw.clamp(-0.5, 0.5)) * 0.5 + 0.5
+
+    # Init blended images
+    img_freqs: List[th.Tensor] = []
+
+    # Low frequencies (for 16x16 images only)
+    img_4 = mm_list[-1]
+    img_4_scale: List[Optional[th.Tensor]] = [None, None, None, img_4]
+    for i in reversed(range(3)):
+        img_4_scale[i] = pad2d(manual_resize(img_4_scale[i + 1], -1), 4)
+
+    for i, scale in enumerate([8.0, 4.0, 2.0, 1.0]):
+        img_4_c = conv(img_4_scale[i])
+        if scale > 1.0:
+            img_4_c = transform_2d(
+                img_4_c, mipmap_mode = 'manual', matrix22 = [1.0 / scale, 0.0, 0.0, 1 / scale])
+        img_freqs.append(img_4_c)
+
+    # Other frequencies
+    for i in range(len(mm_list) - 1):
+        img_i_c = conv(mm_list[-2 - i])
+        img_freqs.append(img_i_c)
+
+    return img_freqs
+
+
+def automatic_resize(img_in: th.Tensor, scale_log2: int, filtering: str = 'bilinear') -> th.Tensor:
+    """Progressively resize an input image.
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        scale_log2 (int): Size change relative to the input resolution (after log2).
+        filtering (str, optional): 'bilinear' or 'nearest'. Defaults to 'bilinear'.
+
+    Returns:
+        Tensor: Resized image.
+    """
+    # Check input validity
+    check_arg_choice(filtering, ['bilinear', 'nearest'], arg_name='filtering')
+
+    # Get input and output sizes (after log2)
+    in_size_log2 = int(np.log2(img_in.shape[2]))
+    out_size_log2 = max(in_size_log2 + scale_log2, 0)
+
+    # Equal size
+    if out_size_log2 == in_size_log2:
+        img_out = img_in
+
+    # Down-sampling (regardless of filtering)
+    elif out_size_log2 < in_size_log2:
+        img_out = img_in
+        for _ in range(in_size_log2 - out_size_log2):
+            img_out = manual_resize(img_out, -1)
+
+    # Up-sampling (progressive bilinear filtering)
+    elif filtering == 'bilinear':
+        img_out = img_in
+        for _ in range(scale_log2):
+            img_out = manual_resize(img_out, 1)
+
+    # Up-sampling (nearest sampling)
+    else:
+        img_out = manual_resize(img_in, scale_log2, filtering)
+
+    return img_out
+
+
+def manual_resize(img_in: th.Tensor, scale_log2: int, filtering: str = 'bilinear') -> th.Tensor:
+    """Manually resize an input image (all-in-one sampling).
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        scale_log2 (int): Size change relative to input (after log2).
+        filtering (str, optional): 'bilinear' or 'nearest'. Defaults to 'bilinear'.
+
+    Returns:
+        Tensor: Resized image.
+    """
+    # Check input validity
+    check_arg_choice(filtering, ['bilinear', 'nearest'], arg_name='filtering')
+
+    # Get input and output sizes
+    in_size = img_in.shape[2]
+    in_size_log2 = int(np.log2(in_size))
+    out_size_log2 = max(in_size_log2 + scale_log2, 0)
+    out_size = 1 << out_size_log2
+
+    # No need for scaling if both sizes are equal
+    if out_size_log2 == in_size_log2:
+        img_out = img_in
+
+    else:
+        # Compute the sampling grid
+        x_coords = th.linspace(1 / out_size - 1, 1 - 1 / out_size, out_size)
+        x, y = th.meshgrid(x_coords, x_coords, indexing='xy')
+        sample_grid = th.stack([x, y], dim=2).expand(img_in.shape[0], -1, -1, -1)
+
+        # Down-sample or up-sample the input image
+        if out_size_log2 < in_size_log2:
+            img_out = grid_sample_impl(img_in, sample_grid, mode=filtering, align_corners=False)
+        else:
+            img_out = grid_sample(img_in, sample_grid, mode=filtering)
+
+    return img_out
+
+
+def pad2d(img_in: th.Tensor, n: Union[int, Tuple[int, int]]) -> th.Tensor:
+    """Perform circular padding on the last two dimensions of an input image. The padding width (n)
+    must not exceed the size of the last two dimensions.
+
+    Prefer using this function over `th.nn.functional.pad` for circular padding until the latter is
+    provided with a C++ backend.
+
+    Args:
+        img_in (tensor): Input image (G or RGB(A)).
+        n (int or tuple of two ints): Padding size in the last two dimensions.
+
+    Raises:
+        ValueError: Input image is not a 4D tensor.
+        ValueError: Padding width (n) exceeds the size of the last two dimensions.
+        ValueError: Padding width (n) is negative.
+
+    Returns:
+        Tensor: Padded image.
+    """
+    # Check input validity
+    if img_in.ndim != 4:
+        raise ValueError('The input image must be a 4D tensor')
+
+    H, W = img_in.shape[2], img_in.shape[3]
+    n_h, n_w = (n, n) if isinstance(n, int) else n
+
+    if n_h > H or n_w > W:
+        raise ValueError('Padding width should not exceed the size of the last two dimensions')
+    elif n_h < 0 or n_w < 0:
+        raise ValueError('Padding width must be non-negative')
+
+    # Perform padding
+    img_pad = img_in if n_h == 0 else \
+              th.cat((img_in.narrow(2, H - n_h, n_h), img_in, img_in.narrow(2, 0, n_h)), dim=2)
+    img_pad = img_pad if n_w == 0 else \
+              th.cat((img_pad.narrow(3, W - n_w, n_w), img_pad, img_pad.narrow(3, 0, n_w)), dim=3)
+
+    return img_pad
+
+
+def grid_sample(img_in: th.Tensor, img_grid: th.Tensor, mode: str = 'bilinear',
+                tiling: int = 3, sbs_format: bool = False) -> th.Tensor:
+    """Sample an input image by a matrix of grid coordinates with tiling preservation.
+
+    The range of coordinates within an image is [-1, 1] by default. If `sbs_format` is True, the
+    range is assumed to be [0, 1] per Substance's convention instead.
+
+    `tiling` (default=3): 0 - no tiling; 1 - horizontal; 2 - vertical; 3 - both.
+
+    Args:
+        img_in (tensor): Input image (4D, BxCxHxW) (G or RGB(A)).
+        img_grid (tensor): Sampling grid (4D, BxHxWx2).
+        mode (str, optional): Sampling mode ('bilinear' or 'nearest'). Defaults to 'bilinear'.
+        tiling (int, optional): Tiling mode. Defaults to 3.
+        sbs_format (bool, optional): If True, the sampling grid is wrapped within [0, 1];
+            otherwise, the sampling grid is wrapped within [-1, 1]. Defaults to False.
+
+    Raises:
+        ValueError: Input image or sampling grid is not a 4D tensor.
+        ValueError: Tiling mode not in range(4).
+
+    Returns:
+        Tensor: Sampled image.
+    """
+    # Check input validity
+    if img_in.ndim != 4 or img_grid.ndim != 4:
+        raise ValueError('The input image and the coordinate grid must be 4D tensors')
+    if tiling not in (0, 1, 2, 3):
+        raise ValueError('The tiling mode must be an integer of 0 to 3.')
+
+    # Pad the input image according to tiling mode
+    img_pad = pad2d(img_in, [tiling >> 1, tiling & 1])
+
+    # Generate the sampling grid that preserves tiling
+    H, W = img_in.shape[2], img_in.shape[3]
+    scales = (W / (W + 2), H / (H + 2))
+    scales_all = scales[0] if H == W else to_tensor(scales)
+
+    # Wrap and scale sampling coordinates to account for tiling modes
+    if tiling == 3:
+        img_grid = img_grid % 1 * 2 - 1 if sbs_format else (img_grid + 1) % 2 - 1
+        img_grid = img_grid * scales_all
+
+    elif tiling:
+        ind = tiling - 1
+        grid_slice = img_grid[..., ind]
+        grid_slice = grid_slice % 1 * 2 - 1 if sbs_format else (grid_slice + 1) % 2 - 1
+        img_grid[..., ind] = grid_slice * scales[ind]
+
+    # Perform sampling
+    img_out = grid_sample_impl(img_pad, img_grid, mode=mode, align_corners=False)
 
     return img_out

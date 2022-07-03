@@ -1,0 +1,6 @@
+include CONTRIBUTING.md
+include LICENSE
+include README.md
+include diffmat/core/export_template/*.sbs
+recursive-include diffmat/config *.yml
+recursive-exclude * __pycache__

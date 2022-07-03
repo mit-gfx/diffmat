@@ -1,0 +1,163 @@
+# This configuration file lists supported nodes under several categories
+#   'default' - most atomic/non-atomic filter and color generation nodes
+#   'generator' - noise generator nodes with no input connector, e.g., crystal_2
+#   'dual' - noise generator nodes with input connectors, e.g., tile_generator
+#   'external' - nodes linked to external images
+#   'pixelprocessor' - pixel processor only
+#   'fxmap' - FX-map only
+#   'output' - output node only
+# --------
+# NOTICE - Nodes that do not appear in this document are considered as unsupported
+
+default:
+  - blend
+  - blur
+  - curve
+  - directionalwarp
+  - dirmotionblur
+  - distance
+  - dyngradient
+  - emboss
+  - gradient
+  - grayscaleconversion
+  - hsl
+  - levels
+  - normal
+  - normal_color
+  - passthrough
+  - sharpen
+  - shuffle
+  - transformation
+  - uniform
+  - warp
+  - convert_to_srgb
+  - convert_to_srgb_grayscale
+  - linear_srgb_to_srgb
+  - linear_srgb_to_srgb_grayscale
+  - convert_to_linear
+  - convert_to_linear_grayscale
+  - srgb_to_linear_srgb
+  - srgb_to_linear_srgb_grayscale
+  - curvature
+  - invert
+  - invert_grayscale
+  - histogram_scan
+  - histogram_range
+  - histogram_select
+  - edge_detect
+  - safe_transform
+  - safe_transform_grayscale
+  - blur_hq_grayscale
+  - blur_hq
+  - non_uniform_blur_grayscale
+  - non_uniform_blur
+  - bevel
+  - slope_blur_grayscale_2
+  - slope_blur_grayscale
+  - slope_blur
+  - mosaic
+  - mosaic_grayscale
+  - auto_levels
+  - ambient_occlusion_2
+  - hbao
+  - highpass_grayscale
+  - highpass
+  - normal_normalise
+  - channel_mixer
+  - normal_combine
+  - rgba_split
+  - rgba_merge
+  - basecolor_metallic_roughness_to_diffuse_specular_glossiness
+  - height_to_normal_world_units_2
+  - normal_to_height
+  - curvature_smooth
+  - multi_switch
+  - multi_switch_grayscale
+  - make_it_tile_patch_grayscale
+  - make_it_tile_patch
+  - make_it_tile_photo_grayscale
+  - make_it_tile_photo
+  - rgb-a_split
+  - rgb-a_merge
+  - switch_grayscale
+  - switch
+  - normal_blend
+  - mirror_grayscale
+  - mirror
+  - vector_morph_grayscale
+  - vector_morph
+  - vector_warp_grayscale
+  - vector_warp
+  - replace_color
+  - normal_color
+  - contrast_luminosity_grayscale
+  - contrast_luminosity
+  - premult_to_straight
+  - straight_to_premult
+  - clamp
+  - clamp_grayscale
+  - pow
+  - pow_grayscale
+  - quantize_grayscale
+  - quantize
+  - anisotropic_blur_grayscale
+  - anisotropic_blur
+  - glow_grayscale
+  - glow
+  - cartesian_to_polar_grayscale
+  - cartesian_to_polar
+  - polar_to_cartesian_grayscale
+  - polar_to_cartesian
+  - normal_sobel_2
+  - normal_vector_rotation
+  - non_square_transform_greyscale
+  - non_square_transform_grayscale
+  - non_square_transform
+  - quad_transform_grayscale
+  - quad_transform
+  - chrominance_extract
+  - histogram_shift
+  - height_map_frequencies_mapper
+  - luminance_highpass
+  - replace_color_range
+  - dissolve
+  - dissolve_2
+  - color
+  - color_burn
+  - color_dodge
+  - difference
+  - linear_burn
+  - luminosity
+  - multi_directional_warp_grayscale
+  - multi_directional_warp_color
+  - shape_drop_shadow_color
+  - shape_drop_shadow_grayscale
+  - shape_glow_color
+  - shape_glow_grayscale
+  - swirl_grayscale
+  - swirl
+  - curvature_sobel
+  - emboss_with_gloss
+  - height_normal_blend
+  - skew_grayscale
+  - skew
+  - trapezoid_transform_grayscale
+  - trapezoid_transform
+  - color_to_mask
+  - facing_normal
+  - normal_invert
+  - grayscale_conversion_advanced
+
+dual:
+  - tile_generator
+  - splatter
+  - splatter_color
+  - splatter_circular
+
+external:
+  - bitmap
+  - svg
+
+pixelprocessor: pixelprocessor
+fxmap: fxmaps
+output: output

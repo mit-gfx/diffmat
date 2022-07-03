@@ -1,0 +1,13 @@
+func:
+  - '[{rho} * math.cos({theta}), {rho} * math.sin({theta})]'
+  - ''
+  - '{rho} * th.cat((th.cos({theta}), th.sin({theta})))'
+  - '{rho} * th.cat((th.cos({theta}), th.sin({theta})), dim=-1)'
+
+output_level: [1, 1, 2, 3]
+
+input: [theta, rho]
+
+promotion_mask: [False, False, True]
+
+param: null

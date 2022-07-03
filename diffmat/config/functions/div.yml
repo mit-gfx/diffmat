@@ -1,0 +1,15 @@
+# For 'div' node, the operator 'op' depends on argument type and is handled in the node translator
+# directly
+func:
+  - '{a} {op} {b}'
+  - '[i {op} j for i, j in zip({a}, {b})]'
+  - '{a} {op} {b}'
+  - '{a} {op} {b}'
+
+output_level: [0, 1, 2, 3]
+
+input: [a, b]
+
+promotion_mask: [False, True, False]
+
+param: null

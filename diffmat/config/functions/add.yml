@@ -1,0 +1,50 @@
+# Function templates that this operator might use. There might be more than one template depending
+# on the operand types, therefore, we introduce a static type checking system which categorizes
+# operands into four levels:
+#   0 - constant scalar (int or float)
+#   1 - constant vector (List[int] or List[float])
+#   2 - tensor 1D (th.Tensor)
+#   3 - tensor 3D/4D (th.Tensor)
+# --------
+# We store function templates as a list of strings to be indexed by the operand level ([0-3]). Each
+# function template is a string that contains brackets like '{variable names}' and can be formated
+# using the 'string'.format(**kwargs) operation.
+# Please observe the rules below when writing function templates:
+#   1. Input variable names should match the input connector names in Substance Designer.
+#   2. For functions with internal parameters (like swizzle), include parameters as variables in the
+#      template as well
+func:
+  - '{a} + {b}'
+  - '[i + j for i, j in zip({a}, {b})]'
+  - '{a} + {b}'
+  - '{a} + {b}'
+
+# As part of the static type checking system, 'output_level' determines the level of node output
+# when each of the function templates above is applied. It is also in the form of a list. The i-th
+# entry indicates the output level of the i-th function template.
+#
+# Function templates usually do not change the output level relative to its operands (so it's simply
+# a list of [0, 1, 2, 3]) but there are exceptions (such as 'swizzle1' and 'vector' nodes).
+output_level: [0, 1, 2, 3]
+
+# Names of input connectors. No translation is needed here.
+input: [a, b]
+
+# Operand promotion is a process of converting scalars to vectors or converting vectors to tensors
+# to match the level of other operands. This reduces the number of cases in specifying function
+# templates since all operands are promoted to the same level and thus fully compatible with the
+# function template.
+# --------
+# The promotion mask enables promotion for partial levels of variables. Like the function template,
+# it is indexed by all integer operand levels but the highest one (i.e., [0-2]). Operand levels
+# masked by False are ignored in promotion.
+#
+# For example, the mask below indicates that scalars will not be promoted to vectors or tensors but
+# vectors will be promoted to tensors when necessary
+promotion_mask: [False, True, False]
+
+# Parameters (if any). The format is:
+#   parameter name: default value
+# Default value can also be a dictionary indexed by the node type, which is used when a collection
+# of nodes shares the same configuration file
+param: null

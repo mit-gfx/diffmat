@@ -1,0 +1,13 @@
+func:
+  - '[{componentsin}, {componentslast}]'
+  - '{componentsin} + {componentslast}'
+  - 'torch.cat(({componentsin}, {componentslast}))'
+  - 'torch.cat(({componentsin}, {componentslast}), dim=-1)'
+
+output_level: [1, 1, 2, 3]
+
+input: [componentsin, componentslast]
+
+promotion_mask: [True, True, True]
+
+param: null
