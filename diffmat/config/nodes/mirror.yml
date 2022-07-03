@@ -1,0 +1,40 @@
+func: mirror
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: list_index
+  sbs_name: mirror_type
+  name: mirror_axis
+  default: x
+  source_list: [x, y, corner]
+
+- type: list_index
+  sbs_name: corner_type
+  name: corner_type
+  default: tl
+  source_list: [tl,tr,bl,br]
+
+- type: default
+  sbs_name: axis_x
+  name: offset_x
+  sbs_default: 0.5
+
+- type: default
+  sbs_name: axis_y
+  name: offset_y
+  sbs_default: 0.5
+
+- type: constant
+  sbs_name: invert_x
+  name: invert_x
+  default: False
+
+- type: constant
+  sbs_name: invert_y
+  name: invert_y
+  default: False

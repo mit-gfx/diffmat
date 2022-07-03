@@ -1,0 +1,10 @@
+func: alpha_split
+
+input:
+  RGBA: rgba
+
+output:
+  RGB: rgb
+  A: a
+
+param: null

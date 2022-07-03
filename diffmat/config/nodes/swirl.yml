@@ -1,0 +1,24 @@
+func: swirl
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: default
+  sbs_name: amount
+  name: amount
+  sbs_default: 8.0
+  scale: [-16.0, 16.0]
+
+- type: default
+  sbs_name: offset
+  name: offset
+  sbs_default: [0.0, 0.0]
+
+- type: default
+  sbs_name: matrix22
+  name: matrix22
+  sbs_default: [2.0, 0.0, 0.0, 2.0]

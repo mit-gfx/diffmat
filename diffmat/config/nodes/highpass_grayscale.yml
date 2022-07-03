@@ -1,0 +1,14 @@
+func: highpass
+
+input:
+  Source: img_in
+
+output:
+  Highpass: ''
+
+param:
+- type: default
+  sbs_name: Radius
+  name: radius
+  sbs_default: 6.0
+  scale: 64.0

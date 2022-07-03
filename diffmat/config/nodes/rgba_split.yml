@@ -1,0 +1,12 @@
+func: rgba_split
+
+input:
+  RGBA: rgba
+
+output:
+  R: r
+  G: g
+  B: b
+  A: a
+
+param: null

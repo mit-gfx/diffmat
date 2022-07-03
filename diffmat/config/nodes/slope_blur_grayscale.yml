@@ -1,0 +1,26 @@
+func: slope_blur
+
+input:
+  Source: img_in
+  Effect: img_mask
+
+output:
+  Slope_Blur: ''
+
+param:
+- type: constant
+  sbs_name: Samples
+  name: samples
+  default: 8
+
+- type: list_index
+  sbs_name: mode
+  name: mode
+  default: blur
+  source_list: ['', '', '', '', '', max, min, blur]
+
+- type: default
+  sbs_name: Intensity
+  name: intensity
+  sbs_default: 10.0
+  scale: 16.0

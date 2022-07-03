@@ -1,0 +1,17 @@
+func: uniform_color
+
+input: null
+
+output: null
+
+param:
+- type: list_index
+  sbs_name: colorswitch
+  name: mode
+  default: color
+  source_list: [gray, color]
+
+- type: default
+  sbs_name: outputcolor
+  name: rgba
+  default: [0.0, 0.0, 0.0, 1.0]

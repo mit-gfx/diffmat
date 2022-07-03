@@ -1,0 +1,9 @@
+func: facing_normal
+
+input:
+  Normal: img_in
+
+output:
+  Facing_Normal: ''
+
+param: null

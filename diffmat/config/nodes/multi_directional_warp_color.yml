@@ -1,0 +1,32 @@
+func: multi_dir_warp
+
+input:
+  input: img_in
+  intensity_input: intensity_mask
+
+output:
+  output: ''
+
+param:
+- type: list_index
+  sbs_name: mode
+  name: mode
+  default: average
+  # 0,5,6,10
+  source_list: [average, '', '', '', '', max, min, '', '', '', chain]
+
+- type: constant
+  sbs_name: directions
+  name: directions
+  default: 4
+
+- type: default
+  sbs_name: intensity
+  name: intensity
+  sbs_default: 10.0
+  scale: 20.0
+
+- type: default
+  sbs_name: warp_angle
+  name: angle
+  sbs_default: 0.0

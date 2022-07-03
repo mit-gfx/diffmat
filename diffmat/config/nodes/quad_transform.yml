@@ -1,0 +1,50 @@
+func: quad_transform
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: list_index
+  sbs_name: culling
+  name: culling
+  default: f-b
+  source_list: [f, b, f-b, b-f]
+
+- type: constant
+  sbs_name: enable_tiling
+  name: enable_tiling
+  sbs_default: False
+
+- type: list_index
+  sbs_name: sampling
+  name: sampling
+  default: bilinear
+  source_list: [bilinear, nearest]
+
+- type: default
+  sbs_name: p00
+  name: p00
+  sbs_default: [0.0, 0.0]
+
+- type: default
+  sbs_name: p01
+  name: p01
+  sbs_default: [0.0, 1.0]
+
+- type: default
+  sbs_name: p10
+  name: p10
+  sbs_default: [1.0, 0.0]
+
+- type: default
+  sbs_name: p11
+  name: p11
+  sbs_default: [1.0, 1.0]
+
+- type: default
+  sbs_name: background_color
+  name: background_color
+  sbs_default: [0.0, 0.0, 0.0, 1.0]

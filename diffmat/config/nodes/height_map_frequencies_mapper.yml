@@ -1,0 +1,15 @@
+func: height_map_frequencies_mapper
+
+input:
+  Height: img_in
+
+output:
+  Displacement: displacement
+  Relief_Parallax: relief_parallax
+
+param:
+- type: default
+  sbs_name: Relief
+  name: relief
+  sbs_default: 16.0
+  scale: 32.0

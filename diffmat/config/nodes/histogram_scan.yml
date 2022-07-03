@@ -1,0 +1,23 @@
+func: histogram_scan
+
+input:
+  Input_1: img_in
+
+output:
+  Output: ''
+
+param:
+- type: constant
+  sbs_name: Invert_Position
+  name: invert_position
+  default: False
+
+- type: default
+  sbs_name: Position
+  name: position
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: Contrast
+  name: contrast
+  sbs_default: 0.0

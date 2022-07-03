@@ -1,0 +1,19 @@
+func: mosaic
+
+input:
+  Source: img_in
+  Effect: img_mask
+
+output:
+  Mosaic: ''
+
+param:
+- type: constant
+  sbs_name: Samples
+  name: samples
+  default: 8
+
+- type: default
+  sbs_name: Intensity
+  name: intensity
+  sbs_default: 0.5

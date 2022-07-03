@@ -1,0 +1,34 @@
+# Below are internal node parameters shared across all material nodes. They are not fully supported
+# for now and only used just in case additional variables are defined via function graphs.
+param:
+  - type: constant
+    sbs_name: outputsize
+    name: output_size
+    default: [0, 0]
+
+  - type: list_index
+    sbs_name: format
+    name: output_format
+    default: uint8
+    source_list: [uint8, uint16, float16, float32]
+
+  - type: constant
+    sbs_name: pixelsize
+    name: pixel_size
+    default: [1.0, 1.0]
+
+  - type: list_index
+    sbs_name: pixelratio
+    name: pixel_ratio
+    default: square
+    source_list: [stretch, square]
+
+  - type: constant
+    sbs_name: tiling
+    name: tiling
+    default: 3
+
+  - type: constant
+    sbs_name: randomseed
+    name: seed
+    default: 0

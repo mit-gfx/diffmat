@@ -1,0 +1,74 @@
+func: make_it_tile_patch
+
+input:
+  Source: img_in
+
+output:
+  Make_It_Tile_Patch: ''
+
+param:
+- type: constant
+  sbs_name: Octave
+  name: octave
+  default: 3
+
+- type: default
+  sbs_name: Mask_Size
+  name: mask_size
+  sbs_default: 1.0
+
+- type: default
+  sbs_name: Mask_Precision
+  name: mask_precision
+  sbs_default: 0.5
+
+- type: default
+  sbs_name: Mask_Warping
+  name: mask_warping
+  sbs_default: 0.0
+  scale: 100.0
+
+- type: default
+  sbs_name: Pattern_size_width
+  name: pattern_width
+  sbs_default: 200.0
+  scale: 1000.0
+
+- type: default
+  sbs_name: Pattern_size_height
+  name: pattern_height
+  sbs_default: 200.0
+  scale: 1000.0
+
+- type: default
+  sbs_name: Disorder
+  name: disorder
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: Size_Variation
+  name: size_variation
+  sbs_default: 0.0
+  scale: 100.0
+
+- type: default
+  sbs_name: Rotation
+  name: rotation
+  sbs_default: 0.0
+  scale: [-360.0, 360.0]
+
+- type: default
+  sbs_name: Rotation_Variation
+  name: rotation_variation
+  sbs_default: 0.0
+  scale: 360.0
+
+- type: default
+  sbs_name: Background_color
+  name: background_color
+  sbs_default: [0.0, 0.0, 0.0, 1.0]
+
+- type: default
+  sbs_name: Color_Variation
+  name: color_variation
+  sbs_default: 0.0

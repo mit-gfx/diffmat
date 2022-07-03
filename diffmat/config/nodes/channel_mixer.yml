@@ -1,0 +1,31 @@
+func: channel_mixer
+
+input:
+  Input: img_in
+
+output:
+  Output: ''
+
+param:
+- type: constant
+  sbs_name: monochrome
+  name: monochrome
+  default: False
+
+- type: default
+  sbs_name: red_channel
+  name: red
+  sbs_default: [100.0, 0.0, 0.0, 0.0]
+  scale: [-200.0, 200.0]
+
+- type: default
+  sbs_name: green_channel
+  name: green
+  sbs_default: [0.0, 100.0, 0.0, 0.0]
+  scale: [-200.0, 200.0]
+
+- type: default
+  sbs_name: blue_channel
+  name: blue
+  sbs_default: [0.0, 0.0, 100.0, 0.0]
+  scale: [-200.0, 200.0]

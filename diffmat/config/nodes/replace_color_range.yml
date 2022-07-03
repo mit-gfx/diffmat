@@ -1,0 +1,28 @@
+func: replace_color_range
+
+input:
+  Input: img_in
+
+output:
+  ToTargetColorRange: ''
+
+param:
+- type: default
+  sbs_name: SourceColor
+  name: source_color
+  sbs_default: [0.501961,0.501961,0.501961]
+
+- type: default
+  sbs_name: TargetColor
+  name: target_color
+  sbs_default: [0.501961,0.501961,0.501961]
+
+- type: default
+  sbs_name: SourceRange
+  name: source_range
+  sbs_default: 0.5
+
+- type: default
+  sbs_name: threshold
+  name: threshold
+  sbs_default: 1.0

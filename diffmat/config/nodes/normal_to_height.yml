@@ -1,0 +1,24 @@
+func: normal_to_height
+
+input:
+  Input: img_in
+
+output:
+  height: ''
+
+param:
+- type: list_index
+  sbs_name: normal_format
+  name: normal_format
+  default: dx
+  source_list: [dx, gl]
+
+- type: default
+  sbs_name: Relief_Balance
+  name: relief_balance
+  sbs_default: [0.5, 0.5, 0.5]
+
+- type: default
+  sbs_name: global_opacity
+  name: opacity
+  sbs_default: 0.36

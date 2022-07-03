@@ -1,0 +1,9 @@
+func: srgb_to_linear
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param: null

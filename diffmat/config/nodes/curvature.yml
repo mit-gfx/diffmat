@@ -1,0 +1,20 @@
+func: curvature
+
+input:
+  Input: normal
+
+output:
+  Output: ''
+
+param:
+- type: list_index
+  sbs_name: normal_format
+  name: normal_format
+  default: dx
+  source_list: [dx, gl]
+
+- type: default
+  sbs_name: intensity
+  name: emboss_intensity
+  sbs_default: 1.0
+  scale: 10.0

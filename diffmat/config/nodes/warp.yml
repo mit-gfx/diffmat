@@ -1,0 +1,13 @@
+func: warp
+
+input:
+  input1: img_in
+  inputgradient: intensity_mask
+
+output: null
+
+param:
+- type: default
+  sbs_name: intensity
+  name: intensity
+  sbs_default: 1.0

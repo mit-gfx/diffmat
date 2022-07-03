@@ -1,0 +1,52 @@
+func: shape_drop_shadow
+
+input:
+  input: img_in
+
+output:
+  output: output
+  mask: mask
+
+param:
+- type: constant
+  sbs_name: input_is_premult
+  name: input_is_pre_multiplied
+  default: True
+
+- type: constant
+  sbs_name: pre_multiply_output
+  name: pre_multiplied_output
+  default: False
+
+- type: default
+  sbs_name: angle
+  name: angle
+  sbs_default: 0.25
+
+- type: default
+  sbs_name: size
+  name: size
+  sbs_default: 0.15
+
+- type: default
+  sbs_name: distance
+  name: dist
+  sbs_default: 0.02
+  scale: [-0.5, 0.5]
+
+- type: default
+  sbs_name: spread
+  name: spread
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: opacity
+  name: opacity
+  sbs_default: 0.5
+
+- type: default
+  sbs_name: glow_color
+  name: shadow_color
+  sbs_default: [0.0, 0.0, 0.0]
+
+

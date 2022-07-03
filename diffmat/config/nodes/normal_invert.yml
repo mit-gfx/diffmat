@@ -1,0 +1,28 @@
+func: normal_invert
+
+input:
+  Normal: img_in
+
+output:
+  normal: ''
+
+param:
+- type: constant
+  sbs_name: invert_red
+  name: invert_red
+  default: False
+
+- type: constant
+  sbs_name: invert_green
+  name: invert_green
+  default: True
+
+- type: constant
+  sbs_name: invert_blue
+  name: invert_blue
+  default: False
+
+- type: constant
+  sbs_name: invert_alpha
+  name: invert_alpha
+  default: False

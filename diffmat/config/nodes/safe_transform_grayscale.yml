@@ -1,0 +1,52 @@
+func: safe_transform
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: constant
+  sbs_name: tile
+  name: tile
+  default: 1
+
+- type: constant
+  sbs_name: tile_safe_rotation
+  name: tile_safe_rot
+  default: True
+
+- type: list_index
+  sbs_name: symmetry
+  name: symmetry
+  default: none
+  source_list: [none, X, 'Y', X+Y]
+
+- type: list_index
+  sbs_name: mipmapmode
+  name: mipmap_mode
+  default: auto
+  source_list: [auto, manual]
+
+- type: constant
+  sbs_name: manualmiplevel
+  name: mipmap_level
+  default: 0
+
+- type: list_index
+  sbs_name: offset_mode
+  name: offset_mode
+  default: manual
+  source_list: [manual, random]
+
+- type: default
+  sbs_name: offset
+  name: offset
+  sbs_default: [0.0, 0.0]
+  scale: [-1.0, 1.0]
+
+- type: default
+  sbs_name: rotation
+  name: angle
+  sbs_default: 0.0

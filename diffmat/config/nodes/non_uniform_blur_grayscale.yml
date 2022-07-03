@@ -1,0 +1,41 @@
+func: non_uniform_blur
+
+input:
+  Source: img_in
+  Effect: img_mask
+
+output:
+  Non_Uniform_Blur: ''
+
+param:
+- type: constant
+  sbs_name: Samples
+  name: samples
+  default: 4
+
+- type: constant
+  sbs_name: Blades
+  name: blades
+  default: 5
+
+- type: default
+  sbs_name: Intensity
+  name: intensity
+  sbs_default: 10.0
+  scale: 50.0
+
+- type: default
+  sbs_name: Anisotropy
+  name: anisotropy
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: Asymmetry
+  name: asymmetry
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: Angle
+  name: angle
+  sbs_default: 0.0
+  

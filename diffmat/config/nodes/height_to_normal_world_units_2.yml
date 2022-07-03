@@ -1,0 +1,32 @@
+func: height_to_normal_world_units
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: list_index
+  sbs_name: normal_format
+  name: normal_format
+  default: gl
+  source_list: [dx, gl]
+
+- type: list_index
+  sbs_name: sampling
+  name: sampling_mode
+  default: standard
+  source_list: [standard, sobel]
+
+- type: default
+  sbs_name: surface_size
+  name: surface_size
+  sbs_default: 300.0
+  scale: 1000.0
+
+- type: default
+  sbs_name: height_depth
+  name: height_depth
+  sbs_default: 16.0
+  scale: 100.0

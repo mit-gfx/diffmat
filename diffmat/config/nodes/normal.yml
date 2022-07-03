@@ -1,0 +1,25 @@
+func: normal
+
+input:
+  input1: img_in
+
+output: null
+
+param:
+- type: list_index
+  sbs_name: inversedy
+  name: normal_format
+  default: dx
+  source_list: [dx, gl]
+
+- type: constant
+  sbs_name: input2alpha
+  name: use_input_alpha
+  default: true
+
+# !scale is different from sbs default!
+- type: default
+  sbs_name: intensity
+  name: intensity
+  sbs_default: 1.0
+  scale: 3.0

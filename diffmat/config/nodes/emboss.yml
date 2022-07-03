@@ -1,0 +1,31 @@
+func: emboss
+
+input:
+  input1: img_in
+  inputgradient: height_map
+
+output: null
+
+param:
+- type: default
+  sbs_name: intensity
+  name: intensity
+  sbs_default: 5.0
+  scale: 10.0
+
+- type: default
+  sbs_name: lightangle
+  name: light_angle
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: highlightcolor
+  name: highlight_color
+  sbs_default: [1.0, 1.0, 1.0, 1.0]
+
+- type: default
+  sbs_name: shadowcolor
+  name: shadow_color
+  sbs_default: [0.0, 0.0, 0.0, 0.0]
+
+  

@@ -1,0 +1,33 @@
+func: quantize
+
+input:
+  Input: img_in
+
+output:
+  Quantize: ''
+
+param:
+- type: constant
+  sbs_name: Quantize_R
+  name: quantize_r
+  default: 4
+
+- type: constant
+  sbs_name: Quantize_G
+  name: quantize_g
+  default: 4
+
+- type: constant
+  sbs_name: Quantize_B
+  name: quantize_b
+  default: 4
+
+- type: constant
+  sbs_name: Quantize_A
+  name: quantize_a
+  default: 4
+
+- type: constant
+  sbs_name: 
+  name: grayscale_flag
+  default: False

@@ -1,0 +1,20 @@
+func: normal_blend
+
+input:
+  NormalFG: normal_fg
+  NormalBG: normal_bg
+  Mask: mask
+
+output:
+  Normal_Blend: ''
+
+param:
+- type: constant
+  sbs_name: Use_Mask
+  name: use_mask
+  default: True
+
+- type: default
+  sbs_name: Opacity
+  name: opacity
+  sbs_default: 1.0

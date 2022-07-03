@@ -1,0 +1,6 @@
+func: passthrough
+
+input:
+  input: img_in
+
+output: null

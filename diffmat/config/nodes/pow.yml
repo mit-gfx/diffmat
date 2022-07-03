@@ -1,0 +1,14 @@
+func: pow
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: default
+  sbs_name: exponent
+  name: exponent
+  sbs_default: 4.0
+  scale: 10.0

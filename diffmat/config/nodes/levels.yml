@@ -1,0 +1,32 @@
+func: levels
+
+input:
+  input1: img_in
+
+output: null
+
+param:
+- type: default
+  sbs_name: levelinlow
+  name: in_low
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: levelinmid
+  name: in_mid
+  sbs_default: 0.5
+
+- type: default
+  sbs_name: levelinhigh
+  name: in_high
+  sbs_default: 1.0
+
+- type: default
+  sbs_name: leveloutlow
+  name: out_low
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: levelouthigh
+  name: out_high
+  sbs_default: 1.0

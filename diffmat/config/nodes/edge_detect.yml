@@ -1,0 +1,30 @@
+func: edge_detect
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: constant
+  sbs_name: invert
+  name: invert_flag
+  default: False
+
+- type: default
+  sbs_name: edge_width
+  name: edge_width
+  sbs_default: 2.0
+  scale: [1.0, 16.0]
+
+- type: default
+  sbs_name: edge_roundness
+  name: edge_roundness
+  sbs_default: 4.0
+  scale: 16.0
+
+- type: default
+  sbs_name: tolerance
+  name: tolerance
+  sbs_default: 0.0

@@ -1,0 +1,20 @@
+func: height_normal_blend
+
+input:
+  Height: img_height
+  Normal: img_normal
+
+output:
+  Normal: ''
+
+param:
+- type: list_index
+  sbs_name: Normal_Format
+  name: normal_format
+  default: dx
+  source_list: [dx, gl]
+
+- type: default
+  sbs_name: Normal_Intensity
+  name: normal_intensity
+  sbs_default: 0.0

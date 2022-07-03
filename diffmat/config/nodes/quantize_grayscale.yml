@@ -1,0 +1,18 @@
+func: quantize
+
+input:
+  Input: img_in
+
+output:
+  Quantize: ''
+
+param:
+- type: constant
+  sbs_name: Quantize
+  name: quantize
+  default: 3
+
+- type: constant
+  sbs_name: 
+  name: grayscale_flag
+  default: True

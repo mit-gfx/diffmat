@@ -1,0 +1,25 @@
+func: distance
+
+input:
+  mask: img_mask
+  source: intensity_mask
+
+output: null
+
+param:
+- type: list_index
+  sbs_name: colorswitch
+  name: mode
+  default: gray
+  source_list: [gray, color]
+
+- type: constant
+  sbs_name: combinedistance
+  name: combine
+  default: True
+
+- type: default
+  sbs_name: distance
+  name: dist
+  sbs_default: 10.0
+  scale: 256.0

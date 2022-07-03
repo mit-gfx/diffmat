@@ -1,0 +1,23 @@
+func: hbao
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: constant
+  sbs_name: samples
+  name: quality
+  default: 8
+
+- type: default
+  sbs_name: height_depth
+  name: depth
+  sbs_default: 0.1
+
+- type: default
+  sbs_name: radius
+  name: radius
+  sbs_default: 1.0

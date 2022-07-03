@@ -1,0 +1,13 @@
+func: rgba_merge
+
+input:
+  R: r
+  G: g
+  B: b
+  A: a
+
+
+output:
+  RGBA_Merge: ''
+
+param: null

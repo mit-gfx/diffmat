@@ -1,0 +1,20 @@
+func: contrast_luminosity
+
+input:
+  Source: img_in
+
+output:
+  Contrast_Luminosity: ''
+
+param:
+- type: default
+  sbs_name: Contrast
+  name: contrast
+  sbs_default: 0.0
+  scale: [-1.0, 1.0]
+
+- type: default
+  sbs_name: Luminosity
+  name: luminosity
+  sbs_default: 0.0
+  scale: [-1.0, 1.0]

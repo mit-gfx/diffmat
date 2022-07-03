@@ -1,0 +1,9 @@
+# Output node uses the passthrough function
+func: passthrough
+
+input:
+  inputNodeOutput: img_in
+
+output: null
+
+param: null

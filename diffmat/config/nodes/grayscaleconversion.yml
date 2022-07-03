@@ -1,0 +1,22 @@
+func: c2g
+
+input:
+  input1: img_in
+
+output: null
+
+param:
+- type: constant
+  sbs_name: alphamult
+  name: flatten_alpha
+  default: False
+
+- type: default
+  sbs_name: channelsweights
+  name: rgba_weights
+  sbs_default: [0.33, 0.33, 0.33, 0.0]
+
+- type: default
+  sbs_name: mattelevel
+  name: bg
+  sbs_default: 1.0

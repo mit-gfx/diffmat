@@ -1,0 +1,20 @@
+func: normal_sobel
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: list_index
+  sbs_name: normal_format
+  name: normal_format
+  default: gl
+  source_list: [dx, gl]
+
+- type: default
+  sbs_name: intensity
+  name: intensity
+  sbs_default: 1.0
+  scale: 3.0

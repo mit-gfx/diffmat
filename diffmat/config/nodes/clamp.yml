@@ -1,0 +1,23 @@
+func: clamp
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: constant
+  sbs_name: apply_to_alpha
+  name: clamp_alpha
+  default: True
+
+- type: default
+  sbs_name: min
+  name: low
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: max
+  name: high
+  sbs_default: 1.0

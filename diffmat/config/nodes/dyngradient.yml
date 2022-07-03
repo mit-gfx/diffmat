@@ -1,0 +1,19 @@
+func: gradient_map_dyn
+
+input:
+  input1: img_in
+  input2: img_gradient
+
+output: null
+
+param:
+  - type: list_index
+    sbs_name: uvselector
+    name: orientation
+    default: horizontal
+    source_list: [horizontal, vertical]
+
+  - type: default
+    sbs_name: coordinate
+    name: position
+    default: 0.0

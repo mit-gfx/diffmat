@@ -1,0 +1,14 @@
+func: vector_morph
+
+input:
+  input: img_in
+  vector_field: vector_field
+
+output:
+  output: ''
+
+param:
+- type: default
+  sbs_name: amount
+  name: amount
+  sbs_default: 1.0

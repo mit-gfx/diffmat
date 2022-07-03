@@ -1,0 +1,10 @@
+func: alpha_merge
+
+input:
+  RGB: rgb
+  A: a
+
+output:
+  RGB-A_Merge: ''
+
+param: null

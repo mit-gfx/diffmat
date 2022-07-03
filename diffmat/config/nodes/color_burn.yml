@@ -1,0 +1,20 @@
+func: color_burn
+
+input:
+  Foreground: img_fg
+  Background: img_bg
+  Mask: mask
+
+output:
+  Color_Burn: ''
+
+param:
+- type: constant
+  sbs_name: Alpha_Blending
+  name: alpha_blending
+  default: True
+  
+- type: default
+  sbs_name: Opacity
+  name: opacity
+  sbs_default: 1.0

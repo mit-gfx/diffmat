@@ -1,0 +1,20 @@
+func: vector_warp
+
+input:
+  input: img_in
+  vector_map: vector_field
+
+output:
+  output: ''
+
+param:
+- type: list_index
+  sbs_name: vector_format
+  name: vector_format
+  default: dx
+  source_list: [dx, gl]
+
+- type: default
+  sbs_name: intensity
+  name: intensity
+  sbs_default: 1.0

@@ -1,0 +1,24 @@
+func: gradient_map
+
+input:
+  input1: img_in
+
+output: null
+
+param:
+  - type: gradient_anchor
+    sbs_name: gradientrgba
+    name: anchors
+    requires_default: False
+
+  - type: list_index
+    sbs_name: colorswitch
+    name: mode
+    default: color
+    source_list: [gray, color]
+
+  - type: list_index
+    sbs_name: interpmode
+    name: linear_interp
+    default: True
+    source_list: [True, False, False]

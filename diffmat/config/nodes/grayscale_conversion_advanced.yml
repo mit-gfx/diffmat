@@ -1,0 +1,14 @@
+func: c2g_advanced
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: list_index
+  sbs_name: grayscale_type
+  name: grayscale_type
+  default: desaturation
+  source_list: [desaturation, luma, average, max, min]

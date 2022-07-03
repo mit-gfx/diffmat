@@ -1,0 +1,20 @@
+func: dissolve
+
+input:
+  Foreground: img_fg
+  Background: img_bg
+  Mask: mask
+
+output:
+  Dissolve: ''
+
+param:
+- type: constant
+  sbs_name: alpha_blending
+  name: alpha_blending
+  default: True
+
+- type: default
+  sbs_name: Opacity
+  name: opacity
+  sbs_default: 1.0

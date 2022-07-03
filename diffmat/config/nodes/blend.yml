@@ -1,0 +1,55 @@
+# Name of the function this node uses
+# The function name must appear in core.functional
+func: blend
+
+# Input variable name mapping
+#   sbs_name: diffmat_name
+input:
+  source: img_fg
+  destination: img_bg
+  opacity: blend_mask
+
+# Output variable name mapping
+#   sbs_name: diffmat_name
+# Atomic nodes don't explicitly label their outputs. Leave the field as null in those cases.
+output: null
+
+# Paramter translator configurations
+# --------
+# Each list item describes a translator that maps one parameter in Substance Designer to its diffmat
+# counterpart. The format is:
+#   type: (str, optional) translator type, default to 'default'.
+#   sbs_name: (str) parameter name in Substance Designer.
+#   name: (str) parameter name in diffmat.
+#   default: (any, optional) default parameter value in diffmat.
+#   sbs_default: (any, optional) default parameter value in Substance designer, used when the
+#     'default' value isn't provided due to being non-trivial to write. Either 'default' or
+#     'sbs_default' must be specified.
+#
+# Other fields required by the translator or the parameter itself should also be included:
+#   scale: (float or tuple[float, float], optional) value range of the parameter for linear mapping,
+#     default to 1.0.
+# --------
+# Available parameter translator types are listed in 'config/factory.yml' and defined in
+# 'translator/param_trans.py'
+param:
+# List index translators interpret values as list indices
+- type: list_index
+  sbs_name: blendingmode
+  name: blending_mode
+  default: copy
+  source_list: [copy, add, subtract, multiply, add_sub, max, min, switch, divide, overlay, screen,
+  soft_light]
+
+# Constant translators create non-optimizable parameters and interpret their values as-is
+- type: constant
+  sbs_name: maskrectangle
+  name: cropping
+  default: [0.0, 1.0, 0.0, 1.0]
+
+# Default translators create optimizable parameters for floating point values
+# The 'type' field for default translators can be omitted
+- type: default
+  sbs_name: opacitymult
+  name: opacity
+  default: 1.0

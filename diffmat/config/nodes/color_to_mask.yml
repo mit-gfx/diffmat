@@ -1,0 +1,34 @@
+func: color_to_mask
+
+input:
+  Input: img_in
+
+output:
+  output: ''
+
+param:
+- type: list_index
+  sbs_name: keying_type
+  name: keying_type
+  default: rgb
+  source_list: [rgb, chrominance, luminance]
+
+- type: constant
+  sbs_name: flatten_alpha
+  name: flatten_alpha
+  default: False
+
+- type: default
+  sbs_name: color
+  name: rgb
+  sbs_default: [0.0, 1.0, 0.0]
+
+- type: default
+  sbs_name: mask_range
+  name: mask_range
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: mask_softness
+  name: mask_softness
+  sbs_default: 0.0

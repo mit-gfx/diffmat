@@ -1,0 +1,19 @@
+func: blur_hq
+
+input:
+  Source: img_in
+
+output:
+  Blur_HQ: ''
+
+param:
+- type: constant
+  sbs_name: Quality
+  name: high_quality
+  default: False
+
+- type: default
+  sbs_name: Intensity
+  name: intensity
+  sbs_default: 10.0
+  scale: 16.0

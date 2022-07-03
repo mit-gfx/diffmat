@@ -1,0 +1,20 @@
+func: normal_vector_rotation
+
+input:
+  Normal: img_in
+  rotation_map: img_map
+
+output:
+  Normal: ''
+
+param:
+- type: list_index
+  sbs_name: normal_format
+  name: normal_format
+  default: dx
+  source_list: [dx, gl]
+
+- type: default
+  sbs_name: rotation_angle
+  name: rotation
+  sbs_default: 0.0

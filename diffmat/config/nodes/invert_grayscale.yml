@@ -1,0 +1,13 @@
+func: invert
+
+input:
+  Source: img_in
+
+output:
+  Invert_Grayscale: ''
+
+param:
+- type: constant
+  sbs_name: invert
+  name: invert_switch
+  default: True

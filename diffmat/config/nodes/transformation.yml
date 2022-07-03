@@ -1,0 +1,41 @@
+func: transform_2d
+
+input:
+  input1: img_in
+
+output: null
+
+param:
+- type: list_index
+  sbs_name: filtering
+  name: sample_mode
+  default: bilinear
+  source_list: [bilinear, nearest]
+
+- type: list_index
+  sbs_name: mipmapmode
+  name: mipmap_mode
+  default: auto
+  source_list: [auto, manual]
+
+- type: constant
+  sbs_name: manualmiplevel
+  name: mipmap_level
+  default: 0
+
+- type: default
+  sbs_name: matrix22
+  name: matrix22
+  sbs_default: [1.0, 0.0, 0.0, 1.0]
+  scale: [-1.0, 1.0]
+
+- type: default
+  sbs_name: offset
+  name: offset
+  sbs_default: [0.0, 0.0]
+  scale: [-1.0, 1.0]
+
+- type: default
+  sbs_name: mattecolor
+  name: matte_color
+  sbs_default: [0.0, 0.0, 0.0, 0.0]

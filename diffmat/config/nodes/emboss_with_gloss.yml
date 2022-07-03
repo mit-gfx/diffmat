@@ -1,0 +1,37 @@
+func: emboss_with_gloss
+
+input:
+  Source: img_in
+  Height: height
+
+output:
+  Emboss_With_Gloss: ''
+
+param:
+- type: default
+  sbs_name: HighlightColor
+  name: highlight_color
+  sbs_default: [1.0, 1.0, 1.0, 1.0]
+
+- type: default
+  sbs_name: ShadowColor
+  name: shadow_color
+  sbs_default: [0.0, 0.0, 0.0, 1.0]
+
+- type: default
+  sbs_name: Gloss
+  name: gloss
+  sbs_default: 0.25
+  scale: 0.5
+
+- type: default
+  sbs_name: Intensity
+  name: intensity
+  sbs_default: 5.0
+  scale: 10.0
+
+- type: default
+  sbs_name: LightAngle
+  name: light_angle
+  sbs_default: 0.0
+

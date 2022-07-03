@@ -1,0 +1,46 @@
+func: shape_glow
+
+input:
+  input: img_in
+
+output:
+  output: output
+  mask: mask
+
+param:
+- type: constant
+  sbs_name: input_is_premult
+  name: input_is_pre_multiplied
+  default: True
+
+- type: constant
+  sbs_name: pre_multiply_output
+  name: pre_multiplied_output
+  default: False
+
+- type: list_index
+  sbs_name: mode
+  name: mode
+  default: soft
+  source_list: [soft, precise]
+
+- type: default
+  sbs_name: width
+  name: width
+  sbs_default: 0.25
+
+- type: default
+  sbs_name: spread
+  name: spread
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: opacity
+  name: opacity
+  sbs_default: 1.0
+
+- type: default
+  sbs_name: glow_color
+  name: glow_color
+  sbs_default: [1.0, 1.0, 1.0]
+

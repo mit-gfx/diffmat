@@ -1,0 +1,26 @@
+func: skew
+
+input:
+  Source: img_in
+
+output:
+  Skew: ''
+
+param:
+- type: list_index
+  sbs_name: Axis
+  name: axis
+  default: horizontal
+  source_list: [horizontal, vertical]
+
+- type: list_index
+  sbs_name: Align
+  name: align
+  default: top_left
+  source_list: [center, top_left, bottom_right]
+
+- type: default
+  sbs_name: Amount
+  name: amount
+  sbs_default: 0.0
+  scale: [-1, 1]

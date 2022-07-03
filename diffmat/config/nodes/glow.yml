@@ -1,0 +1,29 @@
+func: glow
+
+input:
+  Source: img_in
+
+output:
+  Glow: ''
+
+param:
+- type: default
+  sbs_name: Glow_Amount
+  name: glow_amount
+  sbs_default: 0.5
+
+- type: default
+  sbs_name: Clear_Amount
+  name: clear_amount
+  sbs_default: 0.5
+
+- type: default
+  sbs_name: Glow_Size
+  name: size
+  sbs_default: 10.0
+  scale: 20.0
+
+- type: default
+  sbs_name: Glow_Color
+  name: color
+  sbs_default: [1.0, 1.0, 1.0, 1.0]

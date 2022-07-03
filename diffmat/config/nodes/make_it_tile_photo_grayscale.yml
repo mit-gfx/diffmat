@@ -1,0 +1,40 @@
+func: make_it_tile_photo
+
+input:
+  Source: img_in
+
+output:
+  Make_It_Tile_Photo: ''
+
+param:
+- type: default
+  sbs_name: Mask_Warping_H
+  name: mask_warping_x
+  sbs_default: 0.0
+  scale: [-100.0, 100.0]
+
+- type: default
+  sbs_name: Mask_Warping_V
+  name: mask_warping_y
+  sbs_default: 0.0
+  scale: [-100.0, 100.0]
+
+- type: default
+  sbs_name: Mask_Size_H
+  name: mask_size_x
+  sbs_default: 0.1
+
+- type: default
+  sbs_name: Mask_Size_V
+  name: mask_size_y
+  sbs_default: 0.1
+
+- type: default
+  sbs_name: Mask_Precision_H
+  name: mask_precision_x
+  sbs_default: 0.5
+
+- type: default
+  sbs_name: Mask_Precision_V
+  name: mask_precision_y
+  sbs_default: 0.5

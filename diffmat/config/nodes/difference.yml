@@ -1,0 +1,20 @@
+func: difference
+
+input:
+  Background: img_bg
+  Foreground: img_fg
+  Mask: mask
+
+output:
+  Difference: ''
+
+param:
+- type: constant
+  sbs_name: Alpha_Blending
+  name: alpha_blending
+  default: True
+  
+- type: default
+  sbs_name: Opacity
+  name: opacity
+  sbs_default: 1.0

@@ -1,0 +1,23 @@
+func: ambient_occlusion
+
+input:
+  Source: img_in
+
+output:
+  ambient_occlusion: ''
+
+param:
+- type: default
+  sbs_name: spreading
+  name: spreading
+  sbs_default: 0.15
+
+- type: default
+  sbs_name: equalizer
+  name: equalizer
+  sbs_default: [0.0, 0.0, 0.0]
+
+- type: default
+  sbs_name: levels
+  name: levels_param
+  sbs_default: [0.0, 0.5, 1.0]

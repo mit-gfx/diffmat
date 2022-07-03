@@ -1,0 +1,43 @@
+func: bevel
+
+input:
+  input: img_in
+
+output:
+  height: height
+  normal: normal_out
+
+param:
+- type: constant
+  sbs_name: non_uniform_blur
+  name: non_uniform_blur_flag
+  default: True
+
+# - type: list_index
+#   sbs_name: bevel_mode
+#   name: bevel_mode
+#   default: round
+#   source_list: [round, angular]
+
+# - type: constant
+#   sbs_name: Use_Custom_Curve
+#   name: use_custom_curve
+#   default: False
+
+- type: default
+  sbs_name: distance
+  name: dist
+  sbs_default: 0.5
+  scale: [-1.0, 1.0]
+
+- type: default
+  sbs_name: smoothing
+  name: smoothing
+  sbs_default: 0.0
+  scale: 5.0
+
+- type: default
+  sbs_name: normal_intensity
+  name: normal_intensity
+  sbs_default: 10.0
+  scale: 50.0

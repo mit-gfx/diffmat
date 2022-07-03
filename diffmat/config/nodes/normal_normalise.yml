@@ -1,0 +1,9 @@
+func: normal_normalize
+
+input:
+  Normal: normal
+
+output:
+  Normalise: ''
+
+param: null

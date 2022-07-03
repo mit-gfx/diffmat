@@ -1,0 +1,14 @@
+func: pbr_converter
+
+input:
+  basecolor: base_color
+  metallic: metallic
+  roughness: roughness
+
+
+output:
+  diffuse: diffuse
+  specular: specular
+  glossiness: glossiness
+
+param: null

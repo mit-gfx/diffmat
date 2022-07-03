@@ -1,0 +1,28 @@
+func: channel_shuffle
+
+input:
+  input1: img_in
+  input2: img_in_aux
+
+output: null
+
+param:
+- type: constant
+  sbs_name: channelred
+  name: channel_r
+  default: 0
+
+- type: constant
+  sbs_name: channelgreen
+  name: channel_g
+  default: 1
+
+- type: constant
+  sbs_name: channelblue
+  name: channel_b
+  default: 2
+  
+- type: constant
+  sbs_name: channelalpha
+  name: channel_a
+  default: 3

@@ -1,0 +1,13 @@
+func: sharpen
+
+input:
+  input1: img_in
+
+output: null
+
+param:
+- type: default
+  sbs_name: intensity
+  name: intensity
+  sbs_default: 1.0
+  scale: 3.0

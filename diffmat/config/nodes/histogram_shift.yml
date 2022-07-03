@@ -1,0 +1,13 @@
+func: histogram_shift
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param: 
+- type: default
+  sbs_name: position
+  name: position
+  sbs_default: 0.5

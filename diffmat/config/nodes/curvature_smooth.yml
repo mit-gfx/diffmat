@@ -1,0 +1,14 @@
+func: curvature_smooth
+
+input:
+  input: img_in
+
+output:
+  height: ''
+
+param:
+- type: list_index
+  sbs_name: normal_format
+  name: normal_format
+  default: dx
+  source_list: [dx, gl]

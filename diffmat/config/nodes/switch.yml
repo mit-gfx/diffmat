@@ -1,0 +1,14 @@
+func: switch
+
+input:
+  input_1: img_1
+  input_2: img_2
+
+output:
+  output: ''
+
+param:
+- type: constant
+  sbs_name: switch
+  name: flag
+  default: True

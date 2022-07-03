@@ -1,0 +1,23 @@
+func: normal_color
+
+input: null
+
+output:
+  Normal_Color: ''
+
+param:
+- type: list_index
+  sbs_name: Invert_Y
+  name: normal_format
+  default: dx
+  source_list: [dx, gl]
+
+- type: default
+  sbs_name: Direction
+  name: direction
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: Slope_Angle
+  name: slope_angle
+  sbs_default: 0.0

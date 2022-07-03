@@ -1,0 +1,29 @@
+func: trapezoid_transform
+
+input:
+  input: img_in
+
+output:
+  output: ''
+
+param:
+- type: list_index
+  sbs_name: sampling
+  name: sampling
+  default: bilinear
+  source_list: [bilinear, nearest]
+
+- type: default
+  sbs_name: top_stretch
+  name: top_stretch
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: bottom_stretch
+  name: bottom_stretch
+  sbs_default: 0.0
+
+- type: default
+  sbs_name: background_color
+  name: bg_color
+  sbs_default: [0.0, 0.0, 0.0, 1.0]

@@ -1,0 +1,15 @@
+func: normal_combine
+
+input:
+  Input: img_normal1
+  Input_1: img_normal2
+
+output:
+  normal: ''
+
+param:
+- type: list_index
+  sbs_name: blend_quality
+  name: mode
+  default: whiteout
+  source_list: [whiteout, channel_mixer, detail_oriented]

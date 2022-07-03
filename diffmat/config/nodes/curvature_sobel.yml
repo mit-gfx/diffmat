@@ -1,0 +1,19 @@
+func: curvature_sobel
+
+input:
+  normal: img_in
+
+output:
+  output: ''
+
+param:
+- type: default
+  sbs_name: intensity
+  name: intensity
+  sbs_default: 0.5
+
+- type: list_index
+  sbs_name: input_normal_type
+  name: normal_format
+  default: dx
+  source_list: [dx, gl]
