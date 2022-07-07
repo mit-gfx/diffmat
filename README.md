@@ -147,9 +147,12 @@ For example, the following code snippet translates a procedural material named `
 
 ```python
 from pathlib import Path
-from diffmat import MaterialGraphTranslator as MGT
+from diffmat import MaterialGraphTranslator as MGT, config_logger
 from diffmat.optim import Optimizer
 from diffmat.core.io import read_image
+
+# Enable on-screen logging
+config_logger(level='default')
 
 # Input file paths
 sbs_file_path = Path('PATH_TO_SBS') / 'wood_american_cherry.sbs'
@@ -160,8 +163,8 @@ toolkit_path = Path('PATH_TO_SAT')
 result_path = Path('PATH_TO_RESULT')
 external_input_path = result_path / 'external_input'
 
-# Translate the source material graph
-translator = MGT(sbs_file_path, toolkit_path=toolkit_path)
+# Translate the source material graph (in 512x512 resolution)
+translator = MGT(sbs_file_path, res=9, toolkit_path=toolkit_path)
 graph = translator.translate(external_input_folder=external_input_path, device='cuda')
 
 # Compile the graph to generate a differentiable program
