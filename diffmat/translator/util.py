@@ -5,46 +5,13 @@ import itertools
 
 import yaml
 
-from . import types as tp
-from .types import Constant, PathLike, NodeConfig, FunctionConfig
+from diffmat.translator import types as tp
+from diffmat.translator.types import Constant, PathLike, NodeConfig, FunctionConfig
 
 
-class NameAllocator:
-    """Node name allocator.
-    """
-    def __init__(self):
-        """Initialize the allocator counter.
-        """
-        self.counter: Dict[str, int] = {}
-
-    def get_name(self, node_type: str) -> str:
-        """Allocate a name for a translated node.
-
-        Args:
-            node_type (str): Source node type.
-
-        Returns:
-            str: Allocated node name.
-        """
-        # Create a new record for the given node type
-        # The node name is designated to be the same as its type
-        if node_type not in self.counter:
-            self.counter[node_type] = 1
-            name = f'{node_type}_0'
-
-        # The allocated node name is f'{node_type}_{counter_val}'
-        # Increment the counter for the given node type
-        else:
-            name = f'{node_type}_{self.counter[node_type]}'
-            self.counter[node_type] += 1
-
-        return name
-
-    def reset(self):
-        """Reset the allocator counter.
-        """
-        self.counter.clear()
-
+# ----------------------------------- #
+#          Parameter related          #
+# ----------------------------------- #
 
 def is_image(type: int) -> bool:
     """Check if a parameter type refers to color or grayscale images.
@@ -59,44 +26,31 @@ def is_image(type: int) -> bool:
 
 
 def is_optimizable(type: int) -> bool:
-    """Check if a parameter type indicates optimization capability (i.e., it must contain float
-    values exclusively).
+    """Check if a parameter type indicates continuous optimization capability (i.e., it must
+    contain float values exclusively).
 
     Args:
         type (int): Value type specifier. See 'Type numbers' in `diffmat/translator/types.py`.
 
     Returns:
-        bool: Whether the type represents an optimizable parameter (i.e., a float or a floating-
-            point vector).
+        bool: Whether the type represents an optimizable continuous parameter (i.e., a float or a
+            floating-point vector).
     """
     return type in (tp.FLOAT, tp.FLOAT2, tp.FLOAT3, tp.FLOAT4)
 
 
-def has_connections(node: ET.Element) -> bool:
-    """Examine if a graph node has input connections. This function is for backward compatibility
-    since older graphs use 'connexions' as the tag name instead of 'connections'.
+def is_integer_optimizable(type: int) -> bool:
+    """Check if a parameter type indicates integer optimization capability (i.e., it must
+    contain integer values exclusively).
 
     Args:
-        node (Element): XML subtree root of the material node.
+        type (int): Value type specifier. See 'Type numbers' in `diffmat/translator/types.py`.
 
     Returns:
-        bool: Whether XML data contains input connection info.
+        bool: Whether the type represents an optimizable integer parameter (i.e., an integer or a
+            vector of integers).
     """
-    return node.find('connections') is not None or node.find('connexions') is not None
-
-
-def find_connections(node: ET.Element) -> Iterator[ET.Element]:
-    """Return an iterator over the input connections to a graph node. This function is for backward
-    compatibility since older graphs use 'connexions' as the tag name instead of 'connections'.
-
-    Args:
-        node (Element): XML subtree root of the material node.
-
-    Yields:
-        Iterator[Element]: An iterator over the input connection entries of the material node.
-    """
-    return itertools.chain(node.iterfind('connections/connection'),
-                           node.iterfind('connexions/connexion'))
+    return type in (tp.INT, tp.INT2, tp.INT3, tp.INT4)
 
 
 def get_value(node: Optional[ET.Element], default: str = '') -> str:
@@ -240,12 +194,16 @@ def to_constant(value_str: str, type: int) -> Constant:
     Returns:
         Constant: Parameter value in numerics.
     """
+    def int32(x: str) -> int:
+        int_x, p32 = int(x), 2 ** 31
+        return int_x % p32 - int_x // p32 * p32
+
     if type == tp.BOOL:
         value = bool(int(value_str))
     elif type == tp.INT:
-        value = int(value_str)
+        value = int32(value_str)
     elif type in (tp.INT2, tp.INT3, tp.INT4):
-        value = [int(c) for c in value_str.strip().split()]
+        value = [int32(c) for c in value_str.strip().split()]
     elif type == tp.FLOAT:
         value = float(value_str)
     elif type in (tp.FLOAT2, tp.FLOAT3, tp.FLOAT4):
@@ -289,6 +247,47 @@ def to_str(value: Constant, type: int) -> str:
     return value_str
 
 
+# ------------------------------ #
+#          Node related          #
+# ------------------------------ #
+
+class NameAllocator:
+    """Node name allocator.
+    """
+    def __init__(self):
+        """Initialize the allocator counter.
+        """
+        self.counter: Dict[str, int] = {}
+
+    def get_name(self, node_type: str) -> str:
+        """Allocate a name for a translated node.
+
+        Args:
+            node_type (str): Source node type.
+
+        Returns:
+            str: Allocated node name.
+        """
+        # Create a new record for the given node type
+        # The node name is designated to be the same as its type
+        if node_type not in self.counter:
+            self.counter[node_type] = 1
+            name = f'{node_type}_0'
+
+        # The allocated node name is f'{node_type}_{counter_val}'
+        # Increment the counter for the given node type
+        else:
+            name = f'{node_type}_{self.counter[node_type]}'
+            self.counter[node_type] += 1
+
+        return name
+
+    def reset(self):
+        """Reset the allocator counter.
+        """
+        self.counter.clear()
+
+
 def load_config(filename: PathLike) -> Any:
     """Read a configuration file in YAML format.
 
@@ -310,7 +309,7 @@ def load_node_config(node_type: str, mode: str = 'node') -> \
         node_type (str): Material/function node type. All supported node types are listed in
             `diffmat/config/node_list.yml`.
         mode (str, optional): Determines which folder to load configuration from
-            ('node' or 'function'). Defaults to 'node'.
+            ('node', 'function', or 'generator'). Defaults to 'node'.
 
     Raises:
         FileNotFoundError: Configuration file is not found for the given node type.
@@ -324,7 +323,7 @@ def load_node_config(node_type: str, mode: str = 'node') -> \
         return LOADED_CONFIGS[node_config_label]
 
     # Directory names
-    dir_name = f'{mode}s' if mode in ('node', 'function') else mode
+    dir_name = f'{mode}s' if mode in ('node', 'function', 'generator') else mode
 
     # Check if the configuration file exists
     node_config_path = Path(CONFIG_DIR / dir_name / f'{node_type}.yml')
@@ -334,7 +333,7 @@ def load_node_config(node_type: str, mode: str = 'node') -> \
 
     # Load from the config file and inject internal node parameters info
     config: NodeConfig = load_config(node_config_path)
-    if mode == 'node':
+    if mode in ('node', 'generator'):
         param_config = NODE_INTERAL_PARAMS['param'].copy()
         param_config.extend(config.get('param') or [])
         config['param'] = param_config
@@ -362,6 +361,45 @@ def gen_category_lut(config: Dict[str, Union[str, List[str]]]) -> Dict[str, str]
         else:
             lut.update({val: key for val in val})
     return lut
+
+
+def has_connections(node: ET.Element) -> bool:
+    """Examine if a graph node has input connections. This function is for backward compatibility
+    since older graphs use 'connexions' as the tag name instead of 'connections'.
+
+    Args:
+        node (Element): XML subtree root of the material node.
+
+    Returns:
+        bool: Whether XML data contains input connection info.
+    """
+    return node.find('connections') is not None or node.find('connexions') is not None
+
+
+def find_connections(node: ET.Element) -> Iterator[ET.Element]:
+    """Return an iterator over the input connections to a graph node. This function is for backward
+    compatibility since older graphs use 'connexions' as the tag name instead of 'connections'.
+
+    Args:
+        node (Element): XML subtree root of the material node.
+
+    Yields:
+        Iterator[Element]: An iterator over the input connection entries of the material node.
+    """
+    return itertools.chain(node.iterfind('connections/connection'),
+                           node.iterfind('connexions/connexion'))
+
+
+def gen_input_dict(node: ET.Element, sort: bool = True) -> Dict[str, str]:
+    """Generate the input slot configuration of a graph node by extracting its sequence of
+    connections. Optionally sort the input connections by slot names.
+    """
+    # Collect input connector names
+    input_names = [conn.find('identifier').get('v') for conn in find_connections(node)]
+    input_names = sorted(sorted(input_names), key=len) if sort else input_names
+
+    # Allocate input connectors and assign translated names
+    return {name: name.replace(':', '_') for name in input_names}
 
 
 # Global configuration folder

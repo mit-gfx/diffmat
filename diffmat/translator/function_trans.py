@@ -1,13 +1,16 @@
 from xml.etree import ElementTree as ET
 from typing import Union, Optional, List, Tuple, Dict, Type
 
-from .base import BaseNodeTranslator, BaseGraphTranslator
-from .types import Constant, FunctionConfig
-from .util import load_node_config, find_connections
-from .util import get_param_type, get_value, get_param_value, to_constant
-from .util import FUNCTION_CATEGORY_LUT, FACTORY_LUT
-from ..core.function import FunctionNode, GetFunctionNode, RandFunctionNode
-from ..core.function import FunctionGraph
+from diffmat.core.function import (
+    FunctionNode, GetFunctionNode, SetFunctionNode, RandFunctionNode, SequenceFunctionNode
+)
+from diffmat.core.function import FunctionGraph
+from diffmat.translator.base import BaseNodeTranslator, BaseGraphTranslator
+from diffmat.translator.types import Constant, FunctionConfig
+from diffmat.translator.util import (
+    load_node_config, find_connections, get_param_type, get_value, get_param_value, to_constant
+)
+from diffmat.translator.util import FUNCTION_CATEGORY_LUT, FACTORY_LUT
 
 
 class FunctionNodeTranslator(BaseNodeTranslator[FunctionConfig]):
@@ -95,7 +98,7 @@ class FunctionNodeTranslator(BaseNodeTranslator[FunctionConfig]):
         node_kwargs = {key: val for key, val in self.node_config.items() \
                        if key not in ('param', 'input')}
 
-        return FunctionNode(self.name, params=self.params, inputs=self.inputs,
+        return FunctionNode(self.name, self.type, params=self.params, inputs=self.inputs,
                             outputs=self.outputs, **node_kwargs, **obj_kwargs)
 
 
@@ -160,7 +163,36 @@ class GetFunctionNT(FunctionNodeTranslator):
         Returns:
             GetFunctionNT: The translated function node object.
         """
-        return GetFunctionNode(self.name, params=self.params, inputs=self.inputs,
+        return GetFunctionNode(self.name, self.type, params=self.params, inputs=self.inputs,
+                               outputs=self.outputs, **obj_kwargs)
+
+
+class SetFunctionNT(GetFunctionNT):
+    """Translator of XML to a 'set' function node.
+    """
+    def __init__(self, root: ET.Element, name: str, type: str, node_config: FunctionConfig):
+        """Initialize the 'set' function node translator.
+
+        Args:
+            root (Element): Root node of the XML tree.
+            name (str): Function node name.
+            type (str): Function node operation type.
+            node_config (FunctionConfig): Function node configuration info. See `node_config` in
+                the constructor of `FunctionNodeTranslator`.
+        """
+        super().__init__(root, name, type, node_config)
+
+    def translate(self, **obj_kwargs) -> SetFunctionNode:
+        """Translate XML into a 'set' function node object.
+
+        Args:
+            obj_kwargs (Dict[str, Any], optional): Keyword arguments for the constructor of the
+                translated function node object.
+
+        Returns:
+            SetFunctionNT: The translated function node object.
+        """
+        return SetFunctionNode(self.name, self.type, params=self.params, inputs=self.inputs,
                                outputs=self.outputs, **obj_kwargs)
 
 
@@ -189,21 +221,60 @@ class RandFunctionNT(FunctionNodeTranslator):
         Returns:
             RandFunctionNT: The translated function node object.
         """
-        return RandFunctionNode(self.name, inputs=self.inputs, outputs=self.outputs, **obj_kwargs)
+        # Other keyword arguments to the node
+        node_kwargs = {key: val for key, val in self.node_config.items() \
+                       if key not in ('param', 'input')}
+
+        return RandFunctionNode(self.name, self.type, inputs=self.inputs, outputs=self.outputs,
+                                **node_kwargs, **obj_kwargs)
+
+
+class SequenceFunctionNT(FunctionNodeTranslator):
+    """Translator of XML into a 'sequence' function node.
+    """
+    def __init__(self, root: ET.Element, name: str, type: str, node_config: FunctionConfig):
+        """Initialize the 'rand' function node translator.
+
+        Args:
+            root (Element): Root node of the XML tree.
+            name (str): Function node name.
+            type (str): Function node operation type.
+            node_config (FunctionConfig): Function node configuration info. See `node_config` in
+                the constructor of `FunctionNodeTranslator`.
+        """
+        super().__init__(root, name, type, node_config)
+
+    def translate(self, **obj_kwargs) -> SequenceFunctionNode:
+        """Translate XML into a 'sequence' function node object.
+
+        Args:
+            obj_kwargs (Dict[str, Any], optional): Keyword arguments for the constructor of the
+                translated function node object.
+
+        Returns:
+            SequenceFunctionNT: The translated function node object.
+        """
+        return SequenceFunctionNode(self.name, self.type, inputs=self.inputs, outputs=self.outputs,
+                                    **obj_kwargs)
 
 
 class FunctionGraphTranslator(BaseGraphTranslator[FunctionNodeTranslator]):
     """Translator of XML to a differentiable value processor (or a dynamic parameter value).
     """
-    def __init__(self, root: ET.Element, name: str):
+    def __init__(self, root: ET.Element, name: str, per_pixel: bool = False):
         """Initialize the function graph translator.
 
         Args:
             root (Element): Root node of the XML tree.
             name (str): Function graph name, usually identical to the name of the parameter defined
                 by this graph.
+            per_pixel (bool, optional): Whether the function graph is executed in parallel across
+                pixels in a texture (for Pixel Processors). Defaults to False.
         """
         self.name = name
+
+        # Indicates whether the function graph represents a per-pixel function
+        self.per_pixel = per_pixel
 
         # Index to the output node in the node (translator) list
         self.output_node_index: Optional[int] = None
@@ -265,6 +336,11 @@ class FunctionGraphTranslator(BaseGraphTranslator[FunctionNodeTranslator]):
             # Identify node function type
             node_type = node_et.find('function').get('v')
 
+            ## Non-atomic function node
+            if node_type == 'instance':
+                dep_path = get_value(node_et.find('.//funcData//constantValueString'))
+                node_type = dep_path[dep_path.rfind('/')+1:dep_path.rfind('?')]
+
             # Raise type error if the node is not supported
             if node_type not in FUNCTION_CATEGORY_LUT:
                 raise NotImplementedError(f'Unsupported function node type: {node_type}')
@@ -272,12 +348,16 @@ class FunctionGraphTranslator(BaseGraphTranslator[FunctionNodeTranslator]):
             # Query the look-up table for node category and load node configuration
             node_category = FUNCTION_CATEGORY_LUT[node_type]
 
-            if node_category == 'default':
+            if node_category in ('default', 'rand'):
                 node_config = load_node_config(node_type, mode='function')
             elif node_category != 'get':
                 node_config = load_node_config(node_category, mode='function')
             else:
                 node_config = {}
+
+            # For rand nodes, indicate if the random number generator is per-pixel
+            if node_type == 'rand':
+                node_config['per_pixel'] = self.per_pixel
 
             # Construct a function node translator
             node_name = self.node_name_allocator.get_name(node_type)
@@ -309,6 +389,10 @@ class FunctionGraphTranslator(BaseGraphTranslator[FunctionNodeTranslator]):
                 ref_trans = trans_dict[ref]
 
                 # Add the connection
+                if input_name not in trans.inputs:
+                    raise KeyError(f"Input connection '{input_name}' does not exist in node "
+                                   f"'{trans.type}'")
+
                 trans.inputs[input_name] = ref_trans.name
                 ref_trans.outputs.append(trans.name)
 
@@ -326,4 +410,5 @@ class FunctionGraphTranslator(BaseGraphTranslator[FunctionNodeTranslator]):
         # Invoke node generators to produce a list of function graph nodes
         nodes = [trans.translate(**obj_kwargs) for trans in self.node_translators]
 
-        return FunctionGraph(nodes, nodes[self.output_node_index], self.name, **obj_kwargs)
+        return FunctionGraph(nodes, nodes[self.output_node_index], self.name,
+                             per_pixel=self.per_pixel, **obj_kwargs)

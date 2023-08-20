@@ -1,0 +1,20 @@
+func: gradient_linear_2
+
+input: null
+
+output:
+  Simple_Gradient_2: ''
+
+param:
+- type: integer
+  sbs_name: Tiling
+  name: tiling
+  sbs_default: 1
+  scale: [1, 16]
+  quantize: True
+
+- type: list_index
+  sbs_name: rotation
+  name: rotation
+  default: 0
+  source_list: [0, 90]

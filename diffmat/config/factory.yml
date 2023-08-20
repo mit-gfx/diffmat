@@ -3,12 +3,16 @@
 node_trans:
   default: MaterialNodeTranslator
   external: ExternalInputNT
+  pixelprocessor: PixelProcessorTranslator
+  fxmap: FXMapTranslator
   output: MaterialNodeTranslator
+  dummy: DummyNodeTranslator
 
 # Paramter translators' mapping from type to class name
 # The classes are defined in 'translator/param_trans.py'
 param_trans:
   constant: ConstantParamTranslator
+  integer: IntegerParamTranslator
   default: ParamTranslator
   list_index: ListIndexPT
   gradient_anchor: GradientMapAnchorPT
@@ -27,4 +31,6 @@ function_trans:
   const: FunctionNodeTranslator
   div: DivFunctionNT
   get: GetFunctionNT
+  set: SetFunctionNT
   rand: RandFunctionNT
+  sequence: SequenceFunctionNT

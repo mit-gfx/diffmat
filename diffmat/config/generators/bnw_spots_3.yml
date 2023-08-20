@@ -1,0 +1,19 @@
+func: bnw_spots_3
+
+input: null
+
+output:
+  output: ''
+
+param:
+- type: integer
+  sbs_name: scale
+  name: scale
+  sbs_default: 1
+  scale: [1, 8]
+  quantize: True
+
+- type: constant
+  sbs_name: disorder
+  name: disorder
+  default: 0.0

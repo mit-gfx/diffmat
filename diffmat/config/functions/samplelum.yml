@@ -1,0 +1,16 @@
+func:
+  - ''
+  - 'sample({pos}, *{samplelum})'
+  - 'sample({pos}, *{samplelum})'
+  - 'sample({pos}, *{samplelum})'
+
+output_level: [0, 2, 2, 3]
+
+input: [pos]
+
+promotion_mask: [False, False, False]
+
+param:
+  - sbs_name: samplelum
+    name: samplelum
+    default: [0, 0]

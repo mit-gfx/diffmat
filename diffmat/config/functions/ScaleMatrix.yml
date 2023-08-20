@@ -1,0 +1,13 @@
+func:
+  - ''
+  - '[100 / {ScaleUV}[0], 0.0, 0.0, 100 / {ScaleUV}[1]]'
+  - 'th.diag_embed(100 / {ScaleUV}).flatten()'
+  - 'th.diag_embed(100 / {ScaleUV}).flatten(-2, -1)'
+
+output_level: [0, 1, 2, 3]
+
+input: [ScaleUV]
+
+promotion_mask: [False, False, False]
+
+param: null

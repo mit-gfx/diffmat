@@ -1,0 +1,13 @@
+func:
+  - 'int({Input} + 0.5) % 2 > 0'
+  - ''
+  - '({Input} + 0.5).long() % 2 > 0'
+  - '({Input} + 0.5).long() % 2 > 0'
+
+output_level: [0, 1, 2, 3]
+
+input: [Input]
+
+promotion_mask: [False, False, False]
+
+param: null

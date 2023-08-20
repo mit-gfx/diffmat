@@ -3,18 +3,27 @@ from typing import Optional, Union, Dict, List, Tuple
 
 import torch as th
 
-from . import types as tp
-from .base import BaseParamTranslator
-from .function_trans import FunctionGraphTranslator
-from .types import Constant, ParamValue
-from .util import get_param_value, to_constant, is_optimizable
-from ..core.param import ConstantParameter, Parameter, GradientMapAnchor, CurveAnchor, \
-                         DynamicParameter
+from diffmat.core.base import BaseParameter
+from diffmat.core.material import (
+    ConstantParameter, IntegerParameter, Parameter, GradientMapAnchor, CurveAnchor,
+    DynamicParameter
+)
+from diffmat.translator import types as tp
+from diffmat.translator.base import BaseParamTranslator
+from diffmat.translator.function_trans import FunctionGraphTranslator
+from diffmat.translator.types import Constant, ParamValue
+from diffmat.translator.util import get_param_value, to_constant, is_optimizable
 
 
 class ConstantParamTranslator(BaseParamTranslator):
     """Translator of an XML subtree to a constant (non-optimizable) material graph parameter.
+
+    Static members:
+        PARAM_CLASS (Type[Parameter]): Parameter class that the translator instantiates.
     """
+    # Parameter object class that this translator produces
+    PARAM_CLASS = ConstantParameter
+
     def __init__(self, root: Optional[ET.Element], name: Optional[str] = None,
                  sbs_name: Optional[str] = None, default: Optional[Constant] = None,
                  sbs_default: Optional[Constant] = None, requires_default: bool = True,
@@ -25,7 +34,8 @@ class ConstantParamTranslator(BaseParamTranslator):
         please refer to the constructor of `BaseParamTranslator`.
 
         Args:
-            root (Optional[Element]]): Root node of the XML tree.
+            root (Optional[Element]]): Root node of the XML tree. The parameter will be translated
+                to its default value if an XML tree is not given.
             name (Optional[str], optional): Parameter name in Diffmat. Defaults to None.
             sbs_name (Optional[str], optional): Parameter name in Substance Designer.
                 Defaults to None.
@@ -47,6 +57,9 @@ class ConstantParamTranslator(BaseParamTranslator):
 
         super().__init__(root, name=name, sbs_name=sbs_name, default=default,
                          sbs_default=sbs_default, **param_kwargs)
+
+        # Parameters that require default values can not be evaluated to None
+        self.requires_default = requires_default
 
         # Define a simple identity type cast function
         def _t(x: Constant) -> Constant: return x
@@ -131,7 +144,7 @@ class ConstantParamTranslator(BaseParamTranslator):
 
         return value
 
-    def translate(self, **obj_kwargs) -> Union[ConstantParameter, DynamicParameter]:
+    def translate(self, **obj_kwargs) -> Union[BaseParameter, DynamicParameter]:
         """Convert the parameter value to a Python object and instantiate the parameter.
 
         Args:
@@ -143,7 +156,7 @@ class ConstantParamTranslator(BaseParamTranslator):
             RuntimeError: Generating a constant parameter that holds a None value.
 
         Returns:
-            ConstantParameter | DynamicParameter: Translated parameter object.
+            BaseParameter | DynamicParameter: Translated parameter object.
         """
         # Handle dynamic parameter translation
         if self.type < 0:
@@ -151,12 +164,82 @@ class ConstantParamTranslator(BaseParamTranslator):
             return DynamicParameter(self.name, value, map_value=self._map)
 
         # Calculate constant parameter value and construct a parameter object
-        value: Optional[Constant] = self._calc_value()
-        if value is None:
+        value: Optional[ParamValue] = self._calc_value()
+        if self.requires_default and value is None:
             raise RuntimeError("Parameter value None is not allowed for constant parameters. "
                                "Please check whether a default value is provided.")
 
-        return ConstantParameter(self.name, value, **self.param_kwargs, **obj_kwargs)
+        return self.PARAM_CLASS(self.name, value, **self.param_kwargs, **obj_kwargs)
+
+
+class IntegerParamTranslator(ConstantParamTranslator):
+    """Translator of an XML subtree to an integer-valued material graph parameter.
+
+    Static members:
+        PARAM_CLASS (Type[Parameter]): Parameter class that the translator instantiates.
+    """
+    # Parameter object class that this translator produces
+    PARAM_CLASS = IntegerParameter
+
+    def __init__(self, root: Optional[ET.Element], scale: Union[int, Tuple[int, int]] = 1,
+                 **trans_and_param_kwargs):
+        """Initialize the integer parameter translator.
+
+        Args:
+            root (Optional[Element]): Root node of the XML tree. The parameter will be translated
+                to its default value if an XML tree is not given.
+            scale (int | Tuple[int, int], optional): Default parameter value range. If a single
+                integer is given, the range is `[0, scale]`. If a tuple of two integers is given,
+                the range is `[scale[0], scale[1]]`. Defaults to 1.
+            trans_and_param_kwargs (Dict[str, Any], optional): Keyword arguments for the parent
+                class constructor and the translated parameter object.
+        """
+        super().__init__(root, **trans_and_param_kwargs)
+
+        # Set the lower/upper bounds of the parameter
+        if isinstance(scale, (list, tuple)):
+            self.scale = (int(scale[0]), int(scale[1]))
+        else:
+            self.scale = (0, int(scale))
+
+        # Pass the parameter range to the constructed parameter object
+        self.param_kwargs['scale'] = self.scale
+
+        # Verify that the parameter indeed has integer values
+        if self.type not in (tp.DYNAMIC, tp.INT, tp.INT2, tp.INT3, tp.INT4):
+            raise ValueError(f'Parameter {self.name} has a non-integer value type: {self.type}')
+
+    def _normalize(self, value: Union[int, List[int]]) -> int:
+        """Adjust the parameter range according to the input value.
+
+        Args:
+            value (Union[int, List[int]]): Integer parameter value (scalar or vector).
+
+        Returns:
+            int: The input value.
+        """
+        # Detect if the parameter value is out of bound. Substance handles an out-of-bound
+        # parameter by automatically adjusting the scale so that the parameter becomes the midpoint
+        # of the expanded value range. Note that the scale may vary among elements in a vector
+        low, high = self.scale
+
+        if isinstance(value, int):
+            new_low = value * 2 - high if value < low else low
+            new_high = value * 2 - low if value > high else high
+        else:
+            new_low = [v * 2 - high if v < low else low for v in value]
+            new_high = [v * 2 - low if v > high else high for v in value]
+
+        # Save the new value range
+        self.scale = new_low, new_high
+
+        # Update the parameter range of the constructed parameter object
+        self.param_kwargs['scale'] = self.scale
+
+        return value
+
+    def back_translate(self, param: IntegerParameter):
+        ...
 
 
 class ParamTranslator(ConstantParamTranslator):
@@ -169,7 +252,7 @@ class ParamTranslator(ConstantParamTranslator):
     PARAM_CLASS = Parameter
 
     def __init__(self, root: Optional[ET.Element], scale: Union[float, Tuple[float, float]] = 1.0,
-                 **trans_and_param_kwargs):
+                 quantize: bool = False, **trans_and_param_kwargs):
         """Initialize the parameter translator.
 
         Args:
@@ -177,11 +260,16 @@ class ParamTranslator(ConstantParamTranslator):
                 to its default value if an XML tree is not given.
             scale (float | Tuple[float, float], optional): Parameter value range during
                 optimization (one float: [0, val]; two floats: [val_0, val_1]). Defaults to 1.0.
+            quantize (bool, optional): Whether the parameter represents the continuous form of an
+                originally discrete parameter. In that case, the parameter must be quantized to
+                integers after optimization. Defaults to False.
             trans_and_param_kwargs (Dict[str, Any], optional): Keyword arguments for the parent
                 translator class constructor and the translated parameter object.
 
         Raises:
             ValueError: Content of the XML tree implies that the parameter is not optimizable.
+            RuntimeError: Attempt to optimize an integer parameter without setting the `quantize`
+                flag.
         """
         super().__init__(root, **trans_and_param_kwargs)
 
@@ -191,14 +279,24 @@ class ParamTranslator(ConstantParamTranslator):
         else:
             self.scale = (0.0, float(scale))
 
+        # The quantization flag controls whether the result will be rounded to the nearest integer
+        # This is effective for continuous optimization of integer-valued parameters
+        self.quantize = quantize
+
+        # Pass the quantization flag and the parameter range to the constructed parameter object
+        self.param_kwargs.update(quantize=quantize, scale=self.scale)
+
         # Change the type cast function into tensor creation
         def _t(x) -> th.Tensor:
             return th.as_tensor(x, dtype=th.float32)
         self._t = _t
 
         # Verify that the parameter is optimizable
-        if not (self.type in (tp.DYNAMIC, tp.OPTIONAL) or is_optimizable(self.type)):
-            raise ValueError(f'Non-optimizable or unrecognized parameter type: {self.type}')
+        if not (self.type in (tp.DYNAMIC, tp.OPTIONAL, tp.INT) or is_optimizable(self.type)):
+            raise ValueError(f'Parameter {self.name} has a non-optimizable or unrecognized '
+                             f'parameter type: {self.type}')
+        elif self.type == tp.INT and not quantize:
+            raise RuntimeError(f'Attempt to optimize an integer variable without quantization')
 
     def _normalize(self, value: th.Tensor) -> th.Tensor:
         """Linearly map a Substance parameter value to the corresponding diffmat parameter value.
@@ -221,35 +319,13 @@ class ParamTranslator(ConstantParamTranslator):
         self.scale = (new_low.item() if new_low.numel() == 1 else new_low,
                       new_high.item() if new_high.numel() == 1 else new_high)
 
+        # Update the parameter range of the constructed parameter object
+        self.param_kwargs['scale'] = self.scale
+
         return norm_value
 
-    def translate(self, **obj_kwargs) -> Union[Parameter, DynamicParameter]:
-        """Convert the parameter value to a normalized torch tensor and instantiate the parameter.
-
-        Args:
-            obj_kwargs (Dict[str, Any], optional): Keyword arguments that will be passed to
-                the instantiated parameter object and, additionally, a function graph translator
-                when the parameter is dynamic.
-
-        Raises:
-            RuntimeError: Generating an optimizable parameter that holds a None value.
-
-        Returns:
-            Parameter | DynamicParameter: Translated parameter object.
-        """
-        # Handle dynamic parameter translation
-        if self.type < 0:
-            value = self.function_trans.translate(**obj_kwargs)
-            return DynamicParameter(self.name, value)
-
-        # Calculate normalized parameter value and construct a parameter object
-        value: Optional[th.Tensor] = self._calc_value()
-        if value is None and self.PARAM_CLASS is Parameter:
-            raise RuntimeError("Parameter value None is not allowed for generic optimizable "
-                               "parameters. Please check whether a default value is provided.")
-
-        return self.PARAM_CLASS(self.name, value, scale=self.scale, **self.param_kwargs,
-                                **obj_kwargs)
+    def back_translate(self, param: Parameter):
+        ...
 
 
 class ListIndexPT(ConstantParamTranslator):
@@ -282,9 +358,15 @@ class ListIndexPT(ConstantParamTranslator):
         """
         return self.source_list[int(value)]
 
+    def back_translate(self, param: ConstantParameter):
+        ...
+
 
 class GradientMapAnchorPT(ParamTranslator):
     """Parameter translator for color anchors in a gradient map node.
+
+    Static members:
+        PARAM_CLASS (Type[Parameter]): Parameter class that the translator instantiates.
     """
     # Parameter object class that this translator produces
     PARAM_CLASS = GradientMapAnchor
@@ -298,10 +380,13 @@ class GradientMapAnchorPT(ParamTranslator):
             trans_and_param_kwargs (Dict[str, Any], optional): Keyword arguments for the parent
                 translator class constructor and the translated parameter object.
         """
-        super().__init__(root, **trans_and_param_kwargs)
+        super().__init__(root, **trans_and_param_kwargs, requires_default=False)
 
         # Parameter 'interpolate' can only be inferred from gradient anchors so we process it here
-        # rather than using a different translator
+        # rather than using a different translator, not to complicate back translation
+        # --------
+        # This field is currently deprecated since the latest Substance Designer version declares
+        # it as an individual parameter
         self.interpolate = True
 
     def _to_literal(self, value_str: List[Dict[str, str]], _) -> th.Tensor:
@@ -321,9 +406,6 @@ class GradientMapAnchorPT(ParamTranslator):
         # Ensure input value is not empty
         if not value_str:
             raise ValueError('The input cell array must not be empty')
-
-        # Deduce interpolation flag from any cell
-        self.interpolate = float(value_str[0]['midpoint']) <= 0
 
         # Extract positions and colors from respective fields in array cells
         _t = self._t
@@ -352,9 +434,15 @@ class GradientMapAnchorPT(ParamTranslator):
         norm_value[:, 0] = th.diff(norm_value[:, 0], prepend=th.zeros(1))
         return norm_value
 
+    def back_translate(self, param: Parameter):
+        ...
+
 
 class CurveAnchorPT(ParamTranslator):
     """Parameter translator for tone mapping anchors in a curve node.
+
+    Static members:
+        PARAM_CLASS (Type[Parameter]): Parameter class that the translator instantiates.
     """
     # Parameter object class that this translator produces
     PARAM_CLASS = CurveAnchor
@@ -368,7 +456,7 @@ class CurveAnchorPT(ParamTranslator):
             trans_and_param_kwargs (Dict[str, Any], optional): Keyword arguments for the parent
                 translator class constructor and the translated parameter object.
         """
-        super().__init__(root, **trans_and_param_kwargs)
+        super().__init__(root, **trans_and_param_kwargs, requires_default=False)
 
     def _to_literal(self, value_str: List[Dict[str, str]], _) -> th.Tensor:
         """Organize curve anchors into a 2D torch tensor.
@@ -426,3 +514,6 @@ class CurveAnchorPT(ParamTranslator):
 
         # Final per-value normalization to [0, 1]
         return super()._normalize(norm_value)
+
+    def back_translate(self, param: Parameter):
+        ...

@@ -1,0 +1,13 @@
+func:
+  - ''
+  - 'rotate_position({position}, {angle})'
+  - 'rotate_position({position}, {angle})'
+  - 'rotate_position({position}, {angle})'
+
+output_level: [0, 1, 2, 3]
+
+input: [position, angle]
+
+promotion_mask: [False, True, False]
+
+param: null

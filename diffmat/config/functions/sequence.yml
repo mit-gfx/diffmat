@@ -1,0 +1,2 @@
+# Only input connector info is used for sequence nodes
+input: [seqin, seqlast]

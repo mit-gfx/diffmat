@@ -1,0 +1,13 @@
+func:
+  - 'math.radians({deg})'
+  - ''
+  - 'torch.deg2rad({deg})'
+  - 'torch.deg2rad({deg})'
+
+output_level: [0, 1, 2, 3]
+
+input: [deg]
+
+promotion_mask: [False, False, False]
+
+param: null

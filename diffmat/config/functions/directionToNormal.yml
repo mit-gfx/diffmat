@@ -1,0 +1,13 @@
+func:
+  - 'direction_to_normal({Direction}, {slopeAngle}, {yUp})'
+  - ''
+  - 'direction_to_normal({Direction}, {slopeAngle}, {yUp})'
+  - 'direction_to_normal({Direction}, {slopeAngle}, {yUp})'
+
+output_level: [1, 1, 2, 3]
+
+input: [Direction, slopeAngle, yUp]
+
+promotion_mask: [False, False, False]
+
+param: null

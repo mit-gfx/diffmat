@@ -1,0 +1,13 @@
+func:
+  - 'global_random({Input}, {Seed})'
+  - ''
+  - 'global_random({Input}, {Seed})'
+  - 'global_random({Input}, {Seed})'
+
+output_level: [0, 1, 2, 3]
+
+input: [Input, Seed]
+
+promotion_mask: [False, False, False]
+
+param: null

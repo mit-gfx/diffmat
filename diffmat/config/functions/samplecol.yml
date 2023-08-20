@@ -1,0 +1,16 @@
+func:
+  - ''
+  - 'sample({pos}, *{samplecol})'
+  - 'sample({pos}, *{samplecol})'
+  - 'sample({pos}, *{samplecol})'
+
+output_level: [0, 2, 2, 3]
+
+input: [pos]
+
+promotion_mask: [False, False, False]
+
+param:
+  - sbs_name: samplecol
+    name: samplecol
+    default: [0, 0]

@@ -7,10 +7,11 @@ output:
   Make_It_Tile_Patch: ''
 
 param:
-- type: constant
+- type: integer
   sbs_name: Octave
   name: octave
-  default: 3
+  sbs_default: 3
+  scale: 6
 
 - type: default
   sbs_name: Mask_Size

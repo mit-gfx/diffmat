@@ -9,4 +9,3 @@ param:
   - type: curve_anchor
     sbs_name: curveluminance
     name: anchors
-    requires_default: False

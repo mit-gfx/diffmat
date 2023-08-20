@@ -1,0 +1,19 @@
+func: perlin_noise
+
+input: null
+
+output:
+  output: ''
+
+param:
+- type: integer
+  sbs_name: scale
+  name: scale
+  sbs_default: 32
+  scale: [1, 64]
+  quantize: True
+
+- type: constant
+  sbs_name: disorder
+  name: disorder
+  default: 0.0

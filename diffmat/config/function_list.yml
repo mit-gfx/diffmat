@@ -39,6 +39,21 @@ default:
   - samplecol
   - samplelum
   - passthrough
+  - Degrees_to_Turn
+  - oneminus
+  - ParityTest
+  - Pi
+  - rotate_position
+  - RotationMatrix
+  - ScaleMatrix
+  - directionToNormal
+  - Equality_Boolean
+  - '[0_1]_to_[1_0]'
+  - GlobalRandom
+  - EvenCount
+  - OddCount
+  - booleanToFloat1
+  - deg_to_rad
 
 div: div
 
@@ -97,5 +112,11 @@ get:
   - get_integer3
   - get_integer4
   - get_bool
+  - get_string
 
-rand: rand
+rand:
+  - rand
+  - Discrete_[A,B]
+
+set: set
+sequence: sequence

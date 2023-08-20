@@ -1,15 +1,15 @@
 from xml.etree import ElementTree as ET
 from pathlib import Path, PurePath
-from typing import Union, Dict
+from typing import Dict
 import math
 
 import imageio
 import torch as th
 import numpy as np
 
-from .log import get_logger
-from .types import PathLike, DeviceType
-from .util import check_output_dict
+from diffmat.core.log import get_logger
+from diffmat.core.types import PathLike, DeviceType
+from diffmat.core.util import check_output_dict
 
 
 # Logger for the io module
@@ -142,7 +142,7 @@ def save_output_dict_to_sbs(output_dict: Dict[str, th.Tensor], filename: PathLik
             width dimension is not an integral power of 2.
     """
     # Determine which SVBRDF maps are saved
-    from .render import Renderer
+    from diffmat.core.material import Renderer
     output_dict = {channel: img for channel, img in output_dict.items() \
                    if channel in Renderer.CHANNELS}
     logger.info(f"The following SVBRDF maps will be saved: {', '.join(list(output_dict.keys()))}")

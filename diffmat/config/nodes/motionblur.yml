@@ -1,0 +1,19 @@
+func: motion_blur
+
+input:
+  input1: img_in
+  inputgradient: img_grad
+
+output: null
+
+param:
+- type: default
+  sbs_name: intensity
+  name: intensity
+  sbs_default: 1.0
+  scale: 3.0
+
+- type: default
+  sbs_name: shiftangle
+  name: angle
+  default: 0.0

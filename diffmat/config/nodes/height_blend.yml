@@ -1,0 +1,32 @@
+func: height_blend
+
+input:
+  height_top: img_fg
+  height_bottom: img_bg
+  mask: img_mask
+
+output:
+  blended_height: blended_height
+  height_mask: height_mask
+
+param:
+- type: default
+  sbs_name: height_position
+  name: position
+  default: 0.5
+
+- type: default
+  sbs_name: contrast
+  name: contrast
+  default: 0.9
+
+- type: list_index
+  sbs_name: mode
+  name: mode
+  default: balanced
+  source_list: [balanced, bottom]
+
+- type: default
+  sbs_name: opacity
+  name: opacity
+  default: 1.0

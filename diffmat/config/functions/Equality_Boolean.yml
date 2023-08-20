@@ -1,0 +1,13 @@
+func:
+  - '{A} == {B}'
+  - ''
+  - '{A} == {B}'
+  - '{A} == {B}'
+
+output_level: [0, 1, 2, 3]
+
+input: [A, B]
+
+promotion_mask: [False, False, False]
+
+param: null

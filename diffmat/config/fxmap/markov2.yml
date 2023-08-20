@@ -1,0 +1,12 @@
+# Switch node
+input:
+  output0: input_0
+  output1: input_1
+
+output: null
+
+param:
+  - type: constant
+    sbs_name: switch
+    name: switch
+    default: False

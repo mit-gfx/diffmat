@@ -3,10 +3,10 @@ from typing import Dict, Tuple, List, Union, Optional, Iterator
 
 import torch as th
 
-from .base import BaseEvaluableObject
-from .param import ConstantParameter, Parameter
-from .types import DeviceType
+from diffmat.core.base import BaseEvaluableObject
+from diffmat.core.types import DeviceType
 from .util import input_check_all_positional, color_input_check, grayscale_input_check
+from .param import ConstantParameter, Parameter
 
 
 # Render helper functions
@@ -52,6 +52,8 @@ class Renderer(BaseEvaluableObject):
         'normal': (True, 1.0),
         'roughness': (False, 1.0),
         'metallic': (False, 0.0),
+        # 'height': (False, 0.5),
+        # 'ambientocclusion': (False, 1.0),
         'opacity': (False, 1.0)
     }
 
@@ -122,7 +124,7 @@ class Renderer(BaseEvaluableObject):
 
         # Discard the alpha channel of basecolor and normal, map the basecolor to gamma space, and
         # scale the normal image to [-1, 1]
-        albedo, normal, roughness, metallic, opacity = tuple(tensors[:5])
+        albedo, normal, roughness, metallic, opacity, *_ = tensors
         albedo = albedo.narrow(1, 0, 3) ** 2.2
         normal = ((normal.narrow(1, 0, 3) - 0.5) * 2.0)
 

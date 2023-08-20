@@ -2,7 +2,7 @@ func:
   - '[{componentsin}, {componentslast}]'
   - '{componentsin} + {componentslast}'
   - 'torch.cat(({componentsin}, {componentslast}))'
-  - 'torch.cat(({componentsin}, {componentslast}), dim=-1)'
+  - 'cat_broadcast(({componentsin}, {componentslast}), dim=-1)'
 
 output_level: [1, 1, 2, 3]
 

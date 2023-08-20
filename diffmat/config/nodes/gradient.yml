@@ -9,7 +9,6 @@ param:
   - type: gradient_anchor
     sbs_name: gradientrgba
     name: anchors
-    requires_default: False
 
   - type: list_index
     sbs_name: colorswitch

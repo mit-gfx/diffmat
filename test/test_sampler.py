@@ -5,6 +5,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 import argparse
 
 from diffmat import MaterialGraphTranslator as MGT, config_logger
+from diffmat.core.util import FILTER_OFF
 from diffmat.optim import ParamSampler
 
 
@@ -46,8 +47,10 @@ def main():
     parser.add_argument('-s', '--seed', type=int, default=0, help='Random parameter sampling seed')
     parser.add_argument('-ns', '--num-samples', metavar='NUM', type=int, default=1,
                         help='Number of random parameter sets')
-    parser.add_argument('-sve', '--sampling-level-exposed', type=int, default=2,
+    parser.add_argument('-lve', '--filter-exposed', type=int, default=FILTER_OFF,
                         help='Exposed parameter sampling level')
+    parser.add_argument('-lvg', '--filter-generator', type=int, default=FILTER_OFF,
+                        help='Discrete parameter sampling level')
 
     ## Other control
     parser.add_argument('-c', '--cpu', action='store_true', help='Run the test on CPU only')
@@ -83,13 +86,14 @@ def main():
     # Get the translated graph object
     device = 'cpu' if args.cpu else 'cuda'
     graph = translator.translate(
-        seed=args.graph_seed, normal_format=args.normal_format, external_input_folder=ext_input_dir,
-        device=device)
+        seed=args.graph_seed, normal_format=args.normal_format,
+        external_input_folder=ext_input_dir, device=device)
     graph.compile()
 
     # Run random sampler
-    sampler = ParamSampler(graph, algo=args.sampling_algo, algo_kwargs=algo_kwargs, seed=args.seed,
-                           level_exposed=args.sampling_level_exposed, device=device)
+    sampler = ParamSampler(graph, algo=args.sampling_algo, algo_kwargs=algo_kwargs,
+                           seed=args.seed, filter_exposed=args.filter_exposed,
+                           filter_generator=args.filter_generator, device=device)
     img_format = 'exr' if args.save_exr else 'png'
     sampler.evaluate(args.num_samples, config_file=args.config_file, result_dir=output_dir,
                      img_format=img_format)

@@ -7,10 +7,11 @@ output:
   output: ''
 
 param:
-- type: constant
+- type: integer
   sbs_name: tile
   name: tile
-  default: 1
+  sbs_default: 1
+  scale: [1, 16]
 
 - type: constant
   sbs_name: tile_safe_rotation

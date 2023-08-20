@@ -1,0 +1,260 @@
+func: tile_generator
+
+input:
+  background: img_bg
+  pattern_input_1: img_in_1
+  pattern_input_2: img_in_2
+  pattern_input_3: img_in_3
+  pattern_input_4: img_in_4
+  pattern_input_5: img_in_5
+  pattern_input_6: img_in_6
+
+output:
+  output: ''
+
+param:
+- type: integer
+  sbs_name: x_amount
+  name: x_num
+  sbs_default: 10
+  scale: [1, 64]
+  quantize: True
+
+- type: integer
+  sbs_name: y_amount
+  name: y_num
+  sbs_default: 10
+  scale: [1, 64]
+  quantize: True
+
+- type: list_index
+  sbs_name: pattern
+  name: pattern
+  default: brick
+  source_list:
+  - none
+  - image
+  - square
+  - disc
+  - paraboloid
+  - bell
+  - gaussian
+  - thorn
+  - pyramid
+  - brick
+  - gradation
+  - waves
+  - half_bell
+  - ridged_bell
+  - crescent
+  - capsule
+  - cone
+  - gradation_offset
+
+- type: constant
+  sbs_name: pattern_input_number
+  name: input_number
+  default: 1
+
+- type: list_index
+  sbs_name: pattern_input_distribution
+  name: input_distribution
+  default: random
+  source_list: [random, cycle]
+
+- type: default
+  sbs_name: pattern_specific
+  name: pattern_specific
+  default: [0.2, 0.0]
+
+- type: list_index
+  sbs_name: image_input_filtering
+  name: input_filter_mode
+  default: bilinear_mipmap
+  source_list: [bilinear_mipmap, bilinear, nearest]
+
+- type: list_index
+  sbs_name: pattern_rotation
+  name: fixed_rotation
+  default: 0
+  source_list: [0, 90, 180, 270]
+
+- type: constant
+  sbs_name: pattern_rotation_random
+  name: fixed_rotation_random
+  default: 0.0
+
+- type: constant
+  sbs_name: pattern_quincunx_flip
+  name: quincunx_flip
+  default: False
+
+- type: constant
+  sbs_name: pattern_symmetry_random
+  name: symmetry_random
+  default: 0.0
+
+- type: list_index
+  sbs_name: pattern_symmetry_random_mode
+  name: symmetry_random_mode
+  default: both
+  source_list: [both, horizontal, vertical]
+
+- type: list_index
+  sbs_name: size_mode
+  name: size_mode
+  default: interstice
+  source_list: [interstice, scale, scale_square, absolute, pixel]
+
+- type: default
+  sbs_name: middle_size
+  name: middle_size
+  default: [0.5, 0.5]
+
+- type: default
+  sbs_name: interstice
+  name: interstice
+  default: [0.0, 0.0, 0.0, 0.0]
+
+- type: default
+  sbs_name: pattern_size
+  name: size
+  default: [1.0, 1.0]
+
+- type: default
+  sbs_name: pattern_size_absolute
+  name: size_absolute
+  default: [0.1, 0.1]
+
+- type: default
+  sbs_name: pattern_size_pixel
+  name: size_pixel
+  sbs_default: [1.0, 1.0]
+  scale: 4.0
+
+- type: default
+  sbs_name: pattern_size_random
+  name: size_random
+  default: [0.0, 0.0]
+
+- type: default
+  sbs_name: scale
+  name: scale
+  sbs_default: 1.0
+  scale: 2.0
+
+- type: default
+  sbs_name: scale_random
+  name: scale_random
+  default: 0.0
+
+- type: constant
+  sbs_name: scale_random_seed
+  name: scale_random_seed
+  default: 0
+
+- type: default
+  sbs_name: position_offset
+  name: offset
+  default: 0.0
+
+- type: default
+  sbs_name: position_offset_random
+  name: offset_random
+  default: 0.0
+
+- type: constant
+  sbs_name: offset_random_seed
+  name: offset_random_seed
+  default: 0
+
+- type: constant
+  sbs_name: vertical_offset
+  name: vertical_offset
+  default: False
+
+- type: default
+  sbs_name: position_random
+  name: position_random
+  default: [0.0, 0.0]
+
+- type: default
+  sbs_name: global_offset
+  name: global_offset
+  default: [0.0, 0.0]
+
+- type: default
+  sbs_name: rotation
+  name: rotation
+  default: 0.0
+
+- type: default
+  sbs_name: rotation_random
+  name: rotation_random
+  default: 0.0
+
+- type: default
+  sbs_name: pattern_color
+  name: color
+  default: 1.0
+
+- type: default
+  sbs_name: luminance_random
+  name: color_random
+  default: 0.0
+
+- type: constant
+  sbs_name: luminance_by_number
+  name: color_by_number
+  default: False
+
+- type: constant
+  sbs_name: luminance_by_scale
+  name: color_by_scale
+  default: False
+
+- type: constant
+  sbs_name: checker_mask
+  name: checker_mask
+  default: False
+
+- type: constant
+  sbs_name: horizontal_mask
+  name: horizontal_mask
+  default: False
+
+- type: constant
+  sbs_name: vertical_mask
+  name: vertical_mask
+  default: False
+
+- type: constant
+  sbs_name: random_mask
+  name: random_mask
+  default: 0.0
+
+- type: constant
+  sbs_name: invert_mask
+  name: invert_mask
+  default: False
+
+- type: list_index
+  sbs_name: blending_mode
+  name: blending_mode
+  default: add
+  source_list: [add, '', max, add_sub]
+
+- type: default
+  sbs_name: background_color
+  name: background_color
+  default: 0.0
+
+- type: default
+  sbs_name: global_opacity
+  name: global_opacity
+  default: 1.0
+
+- type: constant
+  sbs_name: reverse_rendering_order
+  name: reverse_order
+  default: False

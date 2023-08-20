@@ -1,0 +1,51 @@
+func: brick_generator
+
+input: null
+
+output:
+  Bricks_Generator: ''
+
+param:
+- type: integer
+  sbs_name: Bricks
+  name: bricks
+  sbs_default: [4, 8]
+  scale: [1, 64]
+  quantize: True
+
+- type: default
+  sbs_name: Bevel
+  name: bevel
+  default: [0.5, 0.5, 0.0, 0.0]
+
+- type: constant
+  sbs_name: Keep_Ratio
+  name: keep_ratio
+  default: True
+
+- type: default
+  sbs_name: Gap
+  name: gap
+  default: [0.0, 0.0]
+
+- type: default
+  sbs_name: Middle_Size
+  name: middle_size
+  default: [0.5, 0.5]
+
+- type: default
+  sbs_name: Height
+  name: height
+  sbs_default: [1.0, 1.0, 0.0, 0.0]
+  scale: [-1.0, 1.0]
+
+- type: default
+  sbs_name: Slope
+  name: slope
+  sbs_default: [0.0, 0.0, 0.0, 0.0]
+  scale: [-1.0, 1.0]
+
+- type: default
+  sbs_name: offset
+  name: offset
+  default: [0.5, 0.0]

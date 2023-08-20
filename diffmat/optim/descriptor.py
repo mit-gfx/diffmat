@@ -5,9 +5,9 @@ from torch.nn.functional import interpolate
 import torch as th
 import torch.nn as nn
 
-from ..core.base import BaseEvaluableObject
-from ..core.types import DeviceType
-from ..core.util import input_check
+from diffmat.core.base import BaseEvaluableObject
+from diffmat.core.types import DeviceType
+from diffmat.core.material.util import input_check
 
 
 class TextureDescriptor(BaseEvaluableObject):

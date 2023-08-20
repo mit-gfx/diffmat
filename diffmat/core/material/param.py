@@ -3,10 +3,10 @@ from typing import Union, Tuple, Dict, Optional, Callable
 from torch.nn.functional import relu, hardtanh
 import torch as th
 
-from .base import BaseParameter
-from .function import FunctionGraph
-from .types import ParamValue, Constant, DeviceType
-from .util import OL
+from diffmat.core.base import BaseParameter
+from diffmat.core.function import FunctionGraph
+from diffmat.core.types import ParamValue, IntParamValue, Constant, DeviceType
+from diffmat.core.util import OL
 
 
 class ConstantParameter(BaseParameter[ParamValue]):
@@ -30,17 +30,9 @@ class ConstantParameter(BaseParameter[ParamValue]):
         Returns:
             ParamValue: Parameter value.
         """
-        return self.data
-
-    @property
-    def output_level(self) -> int:
-        """Obtain the category (or level) of the parameter value. A function graph translator uses
-        such info to infer operand types when generating program instructions.
-
-        Returns:
-            int: Parameter value level.
-        """
-        return OL.get_level(self.data)
+        data = self.data
+        return data.clone() if isinstance(data, th.Tensor) \
+               else data.copy() if isinstance(data, list) else data
 
     def set_value(self, value: Constant):
         """Set the parameter value from a constant.
@@ -51,7 +43,7 @@ class ConstantParameter(BaseParameter[ParamValue]):
         if isinstance(self.data, th.Tensor):
             self.data.copy_(self._at(value))
         else:
-            self.data = value
+            self.data = type(self.data)(value)
 
     def to_device(self, device: DeviceType = 'cpu'):
         """Move the material graph parameter to a specified device (e.g., CPU or GPU). The value
@@ -64,6 +56,59 @@ class ConstantParameter(BaseParameter[ParamValue]):
         super().to_device(device)
 
 
+class IntegerParameter(BaseParameter[IntParamValue]):
+    """An integer (only optimizable by gradient-free optimizers) parameter in a differentiable
+    material graph.
+    """
+    IS_OPTIMIZABLE_INTEGER = True
+
+    def __init__(self, name: str, data: IntParamValue,
+                 scale: Tuple[IntParamValue, IntParamValue] = [0, 1], **kwargs):
+        """Initialize the integer-valued parameter.
+
+        Args:
+            name (str): Parameter name.
+            data (IntParamValue): Parameter value.
+            scale (Tuple[IntParamValue, IntParamValue], optional): Valid range of the parameter
+                value ([low, high]). A parameter will not exceed its value range during
+                optimization. Defaults to [0, 1].
+            kwargs (Dict[str, Any], optional): Keyword arguments to pass into the parent class
+                constructor.
+        """
+        super().__init__(name, data, **kwargs)
+
+        # Record integer range
+        low, high = scale
+        self.scale = ([int(v) for v in low] if isinstance(low, (tuple, list)) else int(low),
+                      [int(v) for v in high] if isinstance(high, (tuple, list)) else int(high))
+
+    def evaluate(self) -> IntParamValue:
+        """Obtain the integer parameter value, clamped by the range.
+
+        Returns:
+            IntParamValue: Parameter value within its default range.
+        """
+        data, (low, high) = self.data, self.scale
+
+        # Clamp data value using the parameter range
+        if isinstance(data, int):
+            val = min(max(data, low), high)
+        else:
+            low = [low] * len(data) if isinstance(low, int) else low
+            high = [high] * len(data) if isinstance(high, int) else high
+            val = [min(max(vd, vl), vh) for vd, vl, vh in zip(data, low, high)]
+
+        return val
+
+    def set_value(self, value: IntParamValue):
+        """Set the parameter value from a constant integer.
+
+        Args:
+            value (IntParamValue): Source parameter value.
+        """
+        self.data = [int(v) for v in value] if isinstance(value, (tuple, list)) else int(value)
+
+
 class Parameter(BaseParameter[Optional[th.Tensor]]):
     """An optimizable parameter in a differentiable material graph.
 
@@ -74,7 +119,8 @@ class Parameter(BaseParameter[Optional[th.Tensor]]):
 
     def __init__(self, name: str, data: Optional[th.Tensor],
                  scale: Tuple[Union[float, th.Tensor], Union[float, th.Tensor]] = (0.0, 1.0),
-                 relu_flag: bool = False, hardtanh_flag: bool = True, **kwargs):
+                 relu_flag: bool = False, hardtanh_flag: bool = True, quantize: bool = False,
+                 **kwargs):
         """Initialize an optimizable material graph parameter.
 
         Args:
@@ -89,6 +135,9 @@ class Parameter(BaseParameter[Optional[th.Tensor]]):
                 every optimization iteration. Defaults to False.
             hardtanh_flag (bool, optional): Apply a hardtanh operation to clamp the parameter value
                 in every optimization iteration. Defaults to True.
+            quantize (bool, optional): Whether the parameter represents the continuous form of an
+                originally discrete parameter. In that case, the parameter must be quantized to
+                integers after optimization. Defaults to False.
             kwargs (Dict[str, Any], optional): Keyword arguments to pass into the parent class
                 constructor.
 
@@ -108,6 +157,7 @@ class Parameter(BaseParameter[Optional[th.Tensor]]):
 
         self.relu_flag = relu_flag
         self.hardtanh_flag = hardtanh_flag
+        self.quantize = quantize
 
     def _unnormalize(self, value: th.Tensor) -> th.Tensor:
         """Unnormalize the stored parameter value to be used as a node function argument.
@@ -125,7 +175,7 @@ class Parameter(BaseParameter[Optional[th.Tensor]]):
         elif isinstance(high, th.Tensor) or high != 1:
             value_unnorm = value * high
         else:
-            value_unnorm = value
+            value_unnorm = value.clone()
         return value_unnorm
 
     def evaluate(self) -> Optional[th.Tensor]:
@@ -147,16 +197,6 @@ class Parameter(BaseParameter[Optional[th.Tensor]]):
 
         # Unnormalize the stored parameter as output
         return self._unnormalize(data)
-
-    @property
-    def output_level(self) -> int:
-        """Obtain the category (or level) of the parameter value. A function graph translator uses
-        such info to infer operand types when generating program instructions.
-
-        Returns:
-            int: Parameter value level.
-        """
-        return OL.get_level(self.data)
 
     def set_value(self, value: Constant, normalize: bool = False):
         """Set the parameter value from a constant, with the option of normalizing the input.

@@ -22,6 +22,7 @@ default:
   - grayscaleconversion
   - hsl
   - levels
+  - motionblur
   - normal
   - normal_color
   - passthrough
@@ -147,12 +148,32 @@ default:
   - facing_normal
   - normal_invert
   - grayscale_conversion_advanced
+  - height_blend
+  - noise_upscale_1
+  - noise_upscale_2
+  - color_match
+  - shadows
+
+generator:
+  - bnw_spots_3
+  - brick_generator
+  - clouds_2
+  - crystal_2
+  - gradient_linear_1
+  - gradient_linear_2
+  - gradient_linear_3
+  - perlin_noise
+  - shape
+  - stripes
 
 dual:
-  - tile_generator
+  - arc_pavement
   - splatter
   - splatter_color
   - splatter_circular
+  - tile_generator
+  - tile_generator_color
+  - tile_sampler
 
 external:
   - bitmap

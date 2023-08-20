@@ -8,7 +8,9 @@ import torch as th
 
 from diffmat import MaterialGraphTranslator as MGT, config_logger
 from diffmat.optim import Optimizer
+from diffmat.optim.metric import METRIC_DICT
 from diffmat.core.io import read_image
+from diffmat.core.util import FILTER_OFF
 
 
 def main():
@@ -19,7 +21,8 @@ def main():
     default_result_dir = Path(__file__).resolve().parents[0] / 'result'
 
     # Command line argument parser
-    prog_description = 'Optimize procedural material graph parameters to match an input image'
+    prog_description = ('Optimize (continuous) procedural material graph parameters to match an '
+                        'input image')
     parser = argparse.ArgumentParser(description=prog_description)
 
     ## I/O path
@@ -37,7 +40,7 @@ def main():
                              'randomly sampled textures')
 
     ## Graph related
-    parser.add_argument('--res', type=int, default=9, help='Output image resolution')
+    parser.add_argument('-x', '--res', type=int, default=9, help='Output image resolution')
     parser.add_argument('-l', '--logging-level', metavar='LEVEL', default='default',
                         choices=('none', 'quiet', 'default', 'verbose'), help='Logging level')
     parser.add_argument('-t', '--toolkit-path', metavar='PATH', default='',
@@ -50,37 +53,50 @@ def main():
                         help='Material graph master seed')
     parser.add_argument('--save-output-sbs', action='store_true',
                         help='Save the optimized images in an SBS document')
+    parser.add_argument('--graph-ablation', action='store_true',
+                        help='Generate noise textures using SAT and substitute generator-like '
+                             '(FX-Map, Pixel Processor, and other generator) nodes with dummy '
+                             'pass-through nodes')
 
     ## Optimization
-    parser.add_argument('-n', '--num-iters', type=int, default=1000,
+    parser.add_argument('-n', '--num-iters', type=int, default=2000,
                         help='Number of optimization iterations')
-    parser.add_argument('-m', '--metric', default='td', choices=['td', 'fft'],
-                        help="Texture descriptor type ('td' or 'fft')")
+    parser.add_argument('-m', '--metric', default='vgg', choices=METRIC_DICT.keys(),
+                        help="Texture descriptor type ('vgg' or 'fft')")
     parser.add_argument('-ip', '--init-params', metavar='FILE', default='',
                         help='Specify the initial parameter values using an external file')
     parser.add_argument('-lr', '--learning-rate', type=float, default=5e-4,
                         help='Optimization learning rate')
-    parser.add_argument('-si', '--save-interval', type=int, default=20,
+    parser.add_argument('-si', '--save-interval', type=int, default=100,
                         help='Number of iterations between two checkpoints')
-    parser.add_argument('-li', '--load-checkpoint-iter', type=int, default=-1,
-                        help='Iteration number to load checkpoint from')
-    parser.add_argument('-ld', '--load-checkpoint-dir', default='',
-                        help="The folder where checkpoints are stored")
-    parser.add_argument('-lve', '--opt-level-exposed', type=int, default=2,
+    parser.add_argument('-ld', '--load-checkpoint-file', default='',
+                        help="The checkpoint file to load into the optimizer")
+    parser.add_argument('-lve', '--filter-exposed', type=int, default=FILTER_OFF,
                         help='Exposed parameter optimization level')
+    parser.add_argument('-lvg', '--filter-generator', type=int, default=FILTER_OFF,
+                        help='Generator parameter optimization level')
+    parser.add_argument('-ab', '--ablation-mode', default='none',
+                        choices=['none', 'node', 'subgraph'],
+                        help='Exclude generator-like nodes from optimization')
 
     ## Other control
     parser.add_argument('-c', '--cpu', action='store_true', help='Run the test on CPU only')
     parser.add_argument('--exr', action='store_true', help='Load the input in exr format')
+    parser.add_argument('--stat-only', action='store_true',
+                        help='Only show graph stats and do not run optimization')
+    parser.add_argument('--debug', action='store_true', help='Activate gradient debug mode')
 
     args = parser.parse_args()
+
+    # Activate gradient debugging mode
+    th.autograd.set_detect_anomaly(args.debug)
 
     # Configure diffmat logger
     config_logger(args.logging_level)
 
     # Set up material graph translator and get the translated graph object
     translator = MGT(args.input, args.res, external_noise=args.external_noise,
-                     toolkit_path=args.toolkit_path)
+                     toolkit_path=args.toolkit_path, ablation=args.graph_ablation)
 
     # Create the result folder
     result_dir = Path(args.result_dir) / translator.graph_name
@@ -98,14 +114,27 @@ def main():
     # Get the translated graph object
     device = 'cpu' if args.cpu else 'cuda'
     graph = translator.translate(
-        seed=args.graph_seed, normal_format=args.normal_format, external_input_folder=ext_input_dir,
-        device=device)
+        seed=args.graph_seed, normal_format=args.normal_format,
+        external_input_folder=ext_input_dir, device=device)
     graph.compile()
 
-    # Optionally read the initial parameter values from an external file
+    # Optionally read initial parameter values from an external file
     if args.init_params:
-        init_params: th.Tensor = th.load(args.init_params)['param']
-        graph.set_parameters_from_tensor(init_params.to(device))
+        graph.load_parameters_from_file(args.init_params)
+
+    # Construct the optimizer
+    optimizer_kwargs = {
+        'lr': args.learning_rate,
+        'metric': args.metric,
+        'filter_exposed': args.filter_exposed,
+        'filter_generator': args.filter_generator,
+        'ablation_mode': args.ablation_mode,
+    }
+    optimizer = Optimizer(graph, **optimizer_kwargs)
+
+    # Exit if the user only wants to show graph statistics
+    if args.stat_only:
+        quit()
 
     # Read the specified input image from local file (e.g., real-world target) and resize it to the
     # target optimization size
@@ -113,30 +142,25 @@ def main():
 
     if args.input_image:
         img_size = (1 << args.res, 1 << args.res)
-        target_img = read_image(args.input_image)[:3].unsqueeze(0)
-        target_img = interpolate(
-            target_img, size=img_size, mode='bilinear', align_corners=False)
+        target_img = read_image(args.input_image, device=device)[:3].unsqueeze(0)
+        target_img = interpolate(target_img, size=img_size, mode='bilinear', align_corners=False)
 
     # Read a sampled image from local file (synthetic target)
     else:
         input_dir = result_dir / (args.input_dir_name or 'sample_default')
-        target_img = read_image(input_dir / 'render' / f'{args.input_file_name}.{img_format}')
-        target_img.unsqueeze_(0)
+        img_file = input_dir / 'render' / f'{args.input_file_name}.{img_format}'
+        target_img = read_image(img_file, device=device).unsqueeze(0)
 
     # Run optimization to match the target image
-    optimizer_kwargs = {
-        'lr': args.learning_rate,
-        'metric': args.metric,
-        'opt_level_exposed': args.opt_level_exposed,
+    run_kwargs = {
+        'num_iters': args.num_iters,
+        'result_dir': output_dir,
+        'load_checkpoint_file': args.load_checkpoint_file,
+        'save_interval': args.save_interval,
+        'save_output_sbs': args.save_output_sbs,
+        'img_format': img_format,
     }
-    optimizer = Optimizer(graph, **optimizer_kwargs)
-    optimizer.optimize(target_img, num_iters = args.num_iters,
-                       start_iter = max(args.load_checkpoint_iter, 0),
-                       load_checkpoint = args.load_checkpoint_iter >= 0,
-                       load_checkpoint_dir = args.load_checkpoint_dir,
-                       save_interval = args.save_interval,
-                       save_output_sbs = args.save_output_sbs,
-                       result_dir = output_dir, img_format = img_format)
+    optimizer.optimize(target_img, **run_kwargs)
 
 
 if __name__ == '__main__':

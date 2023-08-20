@@ -1,21 +1,21 @@
 from xml.etree import ElementTree as ET
 from copy import deepcopy
 from pathlib import PurePath, Path
-from typing import List, Tuple, Dict, Set, Optional, Iterator
-import os
+from typing import List, Tuple, Dict, Set, Any, Optional, Iterator
 import random
 import platform
 import subprocess
 import re
+import json
 import logging
 
 import torch as th
 
-from . import types as tp
-from .node_trans import ExternalInputNT
-from .types import PathLike, DeviceType
-from .util import has_connections, to_constant, get_value
-from ..core.io import load_input_dict
+from diffmat.core.io import load_input_dict
+from diffmat.translator import types as tp
+from diffmat.translator.node_trans import ExternalInputNT
+from diffmat.translator.types import PathLike, DeviceType
+from diffmat.translator.util import has_connections, to_constant, get_value
 
 
 class ExtInputGenerator:
@@ -85,7 +85,10 @@ class ExtInputGenerator:
             raise RuntimeError('Failed to obtain Substance Automation Tookit version')
 
         self.toolkit_version = version
+
+        # Reserved fields for automatically fixing SAT-related errors
         self.toolkit_version_fix = ''
+        self.cpu_engine_fix = ''
 
         # Copy and clean up the source XML tree as a template
         self.reset()
@@ -355,53 +358,76 @@ class ExtInputGenerator:
                     node_name, node_uid, gpos, '', node_out_uid, pos_stride=node_pos_stride,
                     output_suffix=node_suffix)
 
-    def _run_sat_command(self, command: str) -> int:
+    def _run_sat_command(self, command: str) -> str:
         """Executes an SAT command and detect warnings/errors reported by the program.
 
         Args:
             command (str): The shell command to execute.
 
         Raises:
+            DeprecationWarning: The SAT version is too old for the *.sbs document.
             RuntimeError: Substance Automation Toolkit command failed, error messages returned.
 
         Returns:
-            int: Return code. 0 means success.
+            str: Standard output of the SAT command.
         """
+        # Read from standard output of the SAT command
         output = subprocess.run(command, shell=True, capture_output=True, text=True)
-        ret_code = 0
+        stderr, stdout = output.stderr, output.stdout
 
         # Detect and handle errors
-        if '[ERROR]' in output.stderr:
+        if '[ERROR]' in stderr:
 
-            # Only version compatilibity issues can be handled for now
-            if 'Application is too old' in output.stderr:
-
-                # Detect the latest document version supported by the SAT
-                version_str = re.search(r'(?<=")[\d\.]+(?=")', output.stderr)[0]
+            # Version compatilibity issue
+            if 'Application is too old' in stderr:
                 self.logger.warn(
                     f"The SAT version '{self.toolkit_version}' appears to be too old for the "
                     f"*.sbs document. Attempting to fix with backward compatibility..."
                 )
+                raise DeprecationWarning(stderr)
 
-                # Replace the version info in the source XML document by the latest possible
-                # version and try again
-                for r in (self.root, self.gt_root):
-                    r.find('formatVersion').set('v', version_str)
-                    r.find('updaterVersion').set('v', version_str)
-                self.toolkit_version_fix = version_str
-                ret_code = 1
-
-            # Throw an exception and show the error message lines
+            # Unknown error type
             else:
-                self.logger.critical(f'Error messages from SAT:\n{output.stderr}')
+                self.logger.critical(f'Error messages from SAT:\n{stderr}')
                 raise RuntimeError('SAT command execution has failed. Please see the error'
                                    'messages above')
 
-        # Detect warnings and alert the user
-        elif '[WARNING]' in output.stderr:
-            self.logger.warn(f'Warning messages from SAT:\n{output.stderr}')
+        # Unknown warnings
+        elif '[WARNING]' in stderr:
+            self.logger.warn(f'Warning messages from SAT:\n{stderr}')
 
-        return ret_code
+        return stdout
+
+    # Executes an sbscooker command
+    _run_sbscooker_command = _run_sat_command
+
+    def _run_sbsrender_command(self, command: str) -> str:
+        """Executes an sbsrender command and parse the output to make sure that the texture images
+        are properly generated.
+
+        Args:
+            command (str): The shell command to execute.
+
+        Raises:
+            RuntimeWarning: The default rendering engine of 'sbsrender' fails to generate output
+                textures.
+
+        Returns:
+            str: Standard output of the sbsrender command.
+        """
+        # Execute the rendering command and retrieve the output
+        output = self._run_sat_command(command)
+
+        # Parse the output in JSON
+        output_json: List[Dict[str, List[Dict[str, Any]]]] = json.loads(output)
+
+        # Detect output textures
+        if not output_json[0]['outputs']:
+            self.logger.warning(f"'sbsrender' failed to generate output textures using the "
+                                 "default rendering engine. Switching to CPU (SSE2) ...")
+            raise RuntimeWarning()
+
+        return output
 
     def _generate_textures(self, seed: int, img_format: str, mode: str = 'input',
                            file_name: str = '', result_folder: PathLike = '.'):
@@ -436,7 +462,6 @@ class ExtInputGenerator:
         # Toolkit executable names
         cooker_path = self.toolkit_path / 'sbscooker'
         render_path = self.toolkit_path / 'sbsrender'
-        packages_dir = self.toolkit_path / 'resources' / 'packages'
 
         # Assemble cooker, render, and cleanup commands
         command_cooker = (
@@ -445,6 +470,7 @@ class ExtInputGenerator:
         command_render = (
             f'"{render_path}" render "{sbsar_file_name}" --output-format "{img_format}" '
             f'--output-name "{{outputNodeName}}" --output-path "{result_folder}"'
+            f'{self.cpu_engine_fix}'
         )
 
         # Build an element tree for writing XML
@@ -458,15 +484,33 @@ class ExtInputGenerator:
                 param_et = node_imp_et.find("parameters/parameter/name[@v='randomseed']/..")
                 param_et.find('paramValue/constantValueInt32').set('v', str(seed))
 
-        # Run cooker and render in a loop to fix potential version error from SAT
-        ret_code = 1
-        while ret_code:
-            ret_code = 0
+        # Run cooker and render in a loop to fix potential errors
+        while True:
+            try:
+                # Render generator textures
+                tree.write(sbs_file_name, encoding='utf-8', xml_declaration=True)
+                self._run_sbscooker_command(command_cooker)
+                self._run_sbsrender_command(command_render)
 
-            # Render generator textures
-            tree.write(sbs_file_name, encoding='utf-8', xml_declaration=True)
-            ret_code = ret_code or self._run_sat_command(command_cooker)
-            ret_code = ret_code or self._run_sat_command(command_render)
+            # Handle version compatibility issue
+            except DeprecationWarning as e:
+
+                # Replace the version info in the source XML document by the latest supported
+                # version and try again
+                version_str = re.search(r'(?<=")[\d\.]+(?=")', e.args[0])[0]
+                for r in (self.root, self.gt_root):
+                    r.find('formatVersion').set('v', version_str)
+                    r.find('updaterVersion').set('v', version_str)
+                self.toolkit_version_fix = version_str
+
+            # Handle empty texture output from 'sbsrender' by switching to CPU rendering
+            except RuntimeWarning:
+                self.cpu_engine_fix = ' --engine sse2'
+                command_render += self.cpu_engine_fix
+
+            # Exit the loop if no error is detected
+            else:
+                break
 
         # Delete the *.sbsar file
         rm = 'del' if self.system_name == 'Windows' else 'rm'

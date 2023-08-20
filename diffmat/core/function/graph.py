@@ -2,24 +2,32 @@ from functools import partial
 from types import CodeType
 from typing import List, Tuple, Dict, Optional, Union, Callable, Any
 import inspect
-import random
 import math
 import textwrap
 
 import torch as th
 
+from diffmat.core.types import ParamValue, ConstantDict, InputDict, OutputList
+from diffmat.core.util import OL, DEBUG
+from . import functional
 from .base import BaseFunctionNode, BaseFunctionGraph
-from .types import ParamValue, ConstantDict, InputDict, OutputList
-from .util import OL
+from .functional import image_sample
 
 
-class FunctionNode(BaseFunctionNode):
+# Typing alias
+BFN = BaseFunctionNode[ConstantDict]
+
+# Namespace for non-atomic functions
+FUNC_NAMESPACE = {n: f for n, f in vars(functional).items() if callable(f)}
+
+
+class FunctionNode(BFN):
     """Class for nodes inside a differentiable function graph.
     """
-    def __init__(self, name: str, func: List[str], params: ConstantDict = {},
+    def __init__(self, name: str, type: str, func: List[str], params: ConstantDict = {},
                  inputs: InputDict = {}, outputs: OutputList = [],
-                 output_level: List[int] = [0, 1, 2],
-                 promotion_mask: List[bool] = [False, False], **kwargs):
+                 output_level: List[int] = [0, 1, 2, 3],
+                 promotion_mask: List[bool] = [False, False, False], **kwargs):
         """Initialize the function node.
 
         Args:
@@ -33,13 +41,13 @@ class FunctionNode(BaseFunctionNode):
                 from this node. Defaults to [].
             output_level (List[int], optional): Output value category (or level) corresponding to
                 function expressions instantiated from templates in the `func` parameter. Please
-                see `add.yml` for a more detailed explanation. Defaults to [0, 1, 2].
+                see `add.yml` for a more detailed explanation. Defaults to [0, 1, 2, 3].
             promotion_mask (List[bool], optional): Operand level promotion mask. Please see
-                `add.yml` for a more detailed explanation. Defaults to [False, False].
+                `add.yml` for a more detailed explanation. Defaults to [False, False, False].
             kwargs (Dict[str, Any], optional): Keyword arguments to pass into the parent class
                 constructor.
         """
-        super().__init__(name, params=params, inputs=inputs, outputs=outputs, **kwargs)
+        super().__init__(name, type, params=params, inputs=inputs, outputs=outputs, **kwargs)
 
         # Node function is defined as a string template. It must be instantiated using input
         # variable names, compiled, and then evaluated
@@ -69,7 +77,8 @@ class FunctionNode(BaseFunctionNode):
         self.sig = inspect.Signature(parameters)
 
     def evaluate(self, *args: ParamValue, return_expr: bool = False,
-                 **kwargs: ParamValue) -> Union[ParamValue, Tuple[ParamValue, str]]:
+                 ns_kwargs: Dict[str, Any] = {}, **kwargs: ParamValue) \
+                    -> Union[ParamValue, Tuple[ParamValue, str]]:
         """Evaluate the node function given input operands, while deducing an expression form of
         the result based on optional input expressions of the operands.
 
@@ -77,6 +86,8 @@ class FunctionNode(BaseFunctionNode):
             args (Sequence[ParamValue]): Operand values or expressions.
             return_expr (bool, optional): Switch for returning an instantiated function expression.
                 Defaults to False.
+            ns_kwargs (Dict[str, Any], optional): Other elements to be added to the local namespace
+                of the node function. Defaults to {}.
             kwargs (Dict[str, ParamValue], optional): Operand values or expressions.
 
         Returns:
@@ -98,13 +109,12 @@ class FunctionNode(BaseFunctionNode):
         operand_exprs = [promote(*pair) for pair in zip(self.inputs, operand_levels)]
 
         # Define a tensor creation function by detecting the current device
-        device = next((val.device for val in operands if isinstance(val, th.Tensor)), 'cpu')
-        bound_args['_t'] = partial(th.as_tensor, device=device)
+        bound_args.update(FUNC_NAMESPACE, _t=self._t, _at=self._at, **ns_kwargs)
 
         # Apply promoted operands to the node function template to get a complete node expression
         node_func_format = self.func[max_level]
         node_expr = node_func_format(**operand_exprs)
-        result: ParamValue = eval(node_expr, None, bound_args)
+        result: ParamValue = eval(node_expr, bound_args)
 
         if not return_expr:
             return result
@@ -152,10 +162,71 @@ class FunctionNode(BaseFunctionNode):
         return node_output_level, node_expr
 
 
-class GetFunctionNode(BaseFunctionNode):
+class RandFunctionNode(FunctionNode):
+    """Class for 'rand' function node in a differentiable function graph.
+    """
+    def __init__(self, name: str, type: str, inputs: InputDict = {}, outputs: OutputList = [],
+                 per_pixel: bool = False, **kwargs):
+        """Initialize the 'rand' function node.
+
+        Args:
+            name (str): Function node name.
+            inputs (InputDict, optional): Mapping from input connectors to predecessor nodes that
+                they connect to. Defaults to {}.
+            outputs (OutputList, optional): List of successor nodes, namely those who receive input
+                from this node. Defaults to [].
+            per_pixel (bool, optional): Whether the rand function produces a single scalar (False)
+                or per-pixel random numbers (True). Defaults to False.
+            kwargs (Dict[str, Any], optional): Keyword arguments to pass into the parent class
+                constructor.
+        """
+        super().__init__(name, type, inputs=inputs, outputs=outputs, **kwargs)
+
+        self.per_pixel = per_pixel
+
+    def evaluate(self, var: Dict[str, ParamValue], *args: ParamValue, return_expr: bool = False,
+                 **kwargs: ParamValue) -> Union[ParamValue, Tuple[ParamValue, str]]:
+        """Evaluate the function node using an optional input that specifies random range.
+
+        Args:
+            res (int): Texture map size, only used when the `rand` node functions pixel-wise.
+            args (Sequence[ParamValue]): Operand values.
+            return_expr (bool, optional): Return an expression of the Get node. Defaults to False.
+
+        Returns:
+            ParamValue: Random scalar or per-pixel random numbers.
+            str (optional): Node expression.
+        """
+        # Define additional variables for node execution
+        ns_kwargs = {
+            'res': self.gen_random(var['$sizelog2'][0]),
+            'per_pixel': self.per_pixel
+        }
+        return super().evaluate(*args, return_expr=return_expr, ns_kwargs=ns_kwargs, **kwargs)
+
+    def evaluate_expr(self, *args: Union[int, str], **kwargs: Union[int, str]) -> Tuple[int, str]:
+        """Static evaluation of the function node. Only used for determining output level.
+
+        Args:
+            args (Sequence[int | str]): Value categories (levels) and expressions of operands.
+            kwargs (Dict[str, int | str], optional): Value categories (levels) and expressions of
+                operands.
+
+        Returns:
+            int: Value category of the generated random number(s).
+            str: Node expression.
+        """
+        # Output level depends on if the node is executed per-pixel
+        level, expr = super().evaluate_expr(*args, **kwargs)
+        level = 3 if self.per_pixel else level
+
+        return level, expr
+
+
+class GetFunctionNode(BFN):
     """Class for 'get' function nodes in a differentiable function graph.
     """
-    def __init__(self, name: str, params: ConstantDict = {}, inputs: InputDict = {},
+    def __init__(self, name: str, type: str, params: ConstantDict = {}, inputs: InputDict = {},
                  outputs: OutputList = [], **kwargs):
         """Initialize the 'get' function node.
 
@@ -170,7 +241,7 @@ class GetFunctionNode(BaseFunctionNode):
             kwargs (Dict[str, Any], optional): Keyword arguments to pass into the parent class
                 constructor.
         """
-        super().__init__(name, params=params, inputs=inputs, outputs=outputs, **kwargs)
+        super().__init__(name, type, params=params, inputs=inputs, outputs=outputs, **kwargs)
 
     def evaluate(self, var: Dict[str, ParamValue],
                  return_expr: bool = False) -> Union[ParamValue, Tuple[ParamValue, str]]:
@@ -212,11 +283,78 @@ class GetFunctionNode(BaseFunctionNode):
         return var_level, f"var['{var_name}']"
 
 
-class RandFunctionNode(BaseFunctionNode):
-    """Class for 'rand' function node in a differentiable function graph.
+class SetFunctionNode(BFN):
+    """Class for 'set' function nodes in a differentiable function graph.
     """
-    def __init__(self, name: str, inputs: InputDict = {}, outputs: OutputList = [], **kwargs):
-        """Initialize the 'rand' function node.
+    def __init__(self, name: str, type: str, params: ConstantDict = {}, inputs: InputDict = {},
+                 outputs: OutputList = [], **kwargs):
+        """Initialize the 'set' function node.
+
+        Args:
+            name (str): Function node name.
+            params (ConstantDict, optional): Function node parameters, including the name of the
+                exported variable. Defaults to {}.
+            inputs (InputDict, optional): Mapping from input connectors to predecessor nodes that
+                they connect to. Defaults to {}.
+            outputs (OutputList, optional): List of successor nodes, namely those who receive input
+                from this node. Defaults to [].
+            kwargs (Dict[str, Any], optional): Keyword arguments to pass into the parent class
+                constructor.
+        """
+        super().__init__(name, type, params=params, inputs=inputs, outputs=outputs, **kwargs)
+
+    def evaluate(self, var: Dict[str, ParamValue], value: ParamValue, value_expr: str = '',
+                 return_expr: bool = False) -> Union[ParamValue, Tuple[ParamValue, str]]:
+        """Evaluate the function node by updating the variable dictionary and returning the input
+        value.
+
+        Args:
+            var (Dict[str, ParamValue]): Collection of named variables visible to the function
+                graph.
+            value (ParamValue): Input value.
+            value_expr (str, optional): Input operand expression. Defaults to ''.
+            return_expr (bool, optional): Return an expression of the Get node. Defaults to False.
+
+        Returns:
+            ParamValue: Passed-through input value.
+            str (optional): Node expression.
+        """
+        # Update the dictionary using the stored variable name and the input value
+        var_name: str = self.params['name']
+        var[var_name] = value
+
+        if return_expr:
+            return value, f"var.__setitem__('{var_name}', {value_expr}) or {value_expr}"
+        else:
+            return value
+
+    def evaluate_expr(self, var: Dict[str, int], value: int,
+                      value_expr: str = '') -> Tuple[int, str]:
+        """Static evaluation of the function node. Return output level and expression.
+
+        Args:
+            var (Dict[str, int]): The value categories (levels) of named variables visible
+                to the function graph.
+            value (int): Input value category.
+            value_expr (str, optional): Input operand expression. Defaults to ''.
+
+        Returns:
+            int: Passed-through input value category.
+            str: Node expression.
+        """
+        # Update the dictionary using the stored variable name and the input level
+        var_name: str = self.params['name']
+        var[var_name] = value
+
+        return value, f"var.__setitem__('{var_name}', {value_expr}) or {value_expr}"
+
+
+class SequenceFunctionNode(BFN):
+    """Class for 'sequence' nodes in a differentiable function graph.
+    """
+    def __init__(self, name: str, type: str, inputs: InputDict = {}, outputs: OutputList = [],
+                 **kwargs):
+        """Initialize the 'sequence' function node.
 
         Args:
             name (str): Function node name.
@@ -227,74 +365,79 @@ class RandFunctionNode(BaseFunctionNode):
             kwargs (Dict[str, Any], optional): Keyword arguments to pass into the parent class
                 constructor.
         """
-        super().__init__(name, inputs=inputs, outputs=outputs, **kwargs)
+        super().__init__(name, type, inputs=inputs, outputs=outputs, **kwargs)
 
-    def evaluate(self, a: Optional[Union[float, th.Tensor]] = None,
+    def evaluate(self, seq_in: ParamValue, seq_last: ParamValue,
+                 seq_in_expr: str = '', seq_last_expr: str = '',
                  return_expr: bool = False) -> Union[ParamValue, Tuple[ParamValue, str]]:
-        """Evaluate the function node using an optional input that specifies random range.
+        """Evaluate the function node, which directly returns the second input.
 
         Args:
-            a (Optional[float | Tensor], optional): Random number scale multiplier.
-                Defaults to None (not applied).
+            seq_in (ParamValue): The first input.
+            seq_last (ParamValue): The second input.
+            seq_in_expr (str, optional): Expression of the first input. Defaults to ''.
+            seq_in_last (str, optional): Expression of the second input. Defaults to ''.
             return_expr (bool, optional): Return an expression of the Get node. Defaults to False.
 
         Returns:
-            ParamValue: Random scalar.
-            str (optional): Node expression.
+            ParamValue: The second input value.
+            str (optional): Expression of the second input.
         """
-        value = random.random()
-        if not return_expr:
-            return value
+        # Drop the first input since it's unused
+        del seq_in, seq_in_expr
 
-        # 'rand' node receives an optional input to determine random range
-        rand_expr = 'rand()'
-        expr = f'{rand_expr} * {a}' if a is not None else rand_expr
-        return value, expr
+        if return_expr:
+            return seq_last, seq_last_expr
+        else:
+            return seq_last
 
-    def evaluate_expr(self, a: Optional[int] = None, a_expr: Optional[str] = None) -> \
-            Tuple[int, str]:
+    def evaluate_expr(self, seq_in: int, seq_last: int, seq_in_expr: str = '',
+                      seq_last_expr: str = '') -> Tuple[int, str]:
         """Static evaluation of the function node. Only used for determining output level.
 
         Args:
-            a (Optional[int], optional): Value category (level) of the input random number scale
-                multiplier. Defaults to None (not applied).
-            a_expr (Optional[str], optional): Expression of the random number scale multiplier.
-                Defaults to None.
+            seq_in (int): Value category (level) of the first input.
+            seq_last (int): Value category of the second input.
+            seq_in_expr (str, optional): Expression of the first input. Defaults to ''.
+            seq_in_last (str, optional): Expression of the second input. Defaults to ''.
 
         Returns:
-            int: Value category of the generated random number(s).
-            str: Node expression.
+            int: Value category of the second input.
+            str: Expression of the second input.
         """
-        # Output is always a scalar
-        level = 0
+        # Drop the first input since it's unused
+        del seq_in, seq_in_expr
 
-        # 'rand' node receives an optional input to determine random range
-        rand_expr = 'rand()'
-        expr = f'{rand_expr} * {a_expr}' if a is not None else rand_expr
-        return level, expr
+        return seq_last, seq_last_expr
 
 
-class FunctionGraph(BaseFunctionGraph[BaseFunctionNode]):
+class FunctionGraph(BaseFunctionGraph[BFN]):
     """Differentiable function graph (value processor) class.
     """
-    def __init__(self, nodes: List[BaseFunctionNode], output_node: BaseFunctionNode, name: str,
-                 **kwargs):
+    def __init__(self, nodes: List[BFN], output_node: BFN, name: str,
+                 per_pixel: bool = False, **kwargs):
         """Initialize the function graph.
 
         Args:
-            nodes (List[BaseFunctionNode]): List of function nodes in the graph.
-            output_node (BaseFunctionNode): Designated output node of the function graph. This node
+            nodes (List[BFN]): List of function nodes in the graph.
+            output_node (BFN): Designated output node of the function graph. This node
                 must be a member of `nodes`, otherwise an error will be thrown.
             name (str): Function graph name, usually equal to the associated parameter name.
+            per_pixel (bool, optional): Whether the function graph is executed in parallel across
+                pixels in a texture (for Pixel Processors). Defaults to False.
             kwargs (Dict[str, Any], optional): Keyword arguments to pass into the parent class
                 constructor.
         """
         super().__init__(nodes, output_node, **kwargs)
 
         self.name = name
+        self.per_pixel = per_pixel
 
         # Topologically sort the function nodes
         self._sort_nodes()
+
+        # Store precomputed random numbers
+        self.rand_cache: Dict[str, ParamValue] = {}
 
         # Store precompiled program
         self.program_str: Optional[str] = None
@@ -333,31 +476,37 @@ class FunctionGraph(BaseFunctionGraph[BaseFunctionNode]):
 
             # Obtain node output level and generate node expression
             # Only pass the 'var' dictionary to the node if it conducts 'get' or 'set' operations
-            var_args = [var] if isinstance(node, GetFunctionNode) else []
+            var_args = [var] if isinstance(node, (GetFunctionNode, SetFunctionNode)) else []
             level, node_expr = node.evaluate_expr(*var_args, *input_levels, *input_exprs)
             if level < 0:
                 raise RuntimeError(f"Function graph compilation failed. The output of expression "
                                    f"'{node_expr}' is invalid.")
 
+            # 3D or 4D tensors won't appear in non-per-pixel functions
+            if not self.per_pixel:
+                level = min(level, 2)
+
             # Generate node statement and update memory
             statements.append(f'{expr} = {node_expr}')
             memory_levels[node.name] = level
 
-        # Add the output statement
+        # Add the output statement (promote the output for per-pixel functions)
         output_expr = memory_exprs[self.output_node.name]
         output_level = memory_levels[self.output_node.name]
-        statements.append(f'result = {output_expr}')
+        target_level = 3 if self.per_pixel else output_level
+        statements.append(f'result = {OL.promote_expr(output_expr, output_level, target_level)}')
 
         # Compile the list of statements into Python code
         self.program_str = '\n'.join(statements)
         self.program: CodeType = compile(self.program_str, '<string>', 'exec')
 
-        return output_level
+        return target_level
 
-    def evaluate(self, var: Dict[str, ParamValue] = {}) -> ParamValue:
+    def evaluate(self, *img_list: th.Tensor, var: Dict[str, ParamValue] = {}) -> ParamValue:
         """Evaluate the function graph with external (global or node-specific) variables.
 
         Args:
+            img_list (Sequence[Tensor], optional): List of input images (for Pixel Processors).
             var (Dict[str, ParamValue], optional): Collection of named variables visible to the
                 function graph, including graph-wide exposed parameters and internal material node
                 parameters. Defaults to {}.
@@ -376,13 +525,13 @@ class FunctionGraph(BaseFunctionGraph[BaseFunctionNode]):
         # The namespace for function graph execution
         #   - '_t' and '_at' are tensor creation functions on the local device
         #   - 'rand' is a random number generation function
+        #   - 'sample' is an image sampling function for pixel processors
         local_ns: Dict[str, Any] = {
-            'math': math,
-            'torch': th,
-            'var': var,
-            '_t': self._t,
-            '_at': self._at,
-            'rand': random.random,
+            'math': math, 'torch': th,
+            'var': var, '_t': self._t, '_at': self._at,
+            'per_pixel': self.per_pixel, 'size': [int(v) for v in var['$size'][::-1]],
+            'sample': partial(image_sample, img_list),
+            **FUNC_NAMESPACE
         }
 
         # Execute the compiled code and extract the result
@@ -391,6 +540,9 @@ class FunctionGraph(BaseFunctionGraph[BaseFunctionNode]):
         except Exception as e:
             self.log_debug_info(local_ns, has_error=True)
             raise e
+        else:
+            if DEBUG:
+                self.log_debug_info(local_ns)
 
         result: ParamValue = local_ns['result']
 
@@ -406,6 +558,11 @@ class FunctionGraph(BaseFunctionGraph[BaseFunctionNode]):
         Args:
             device (DeviceType, optional): Target device ID. Defaults to 'cpu'.
         """
+        # Move the random numbers cache to the target device
+        for val in enumerate(self.rand_cache.values()):
+            if isinstance(val, th.Tensor):
+                val.to(device)
+
         # Move nodes to the target device and set the device attribute
         super().to_device(device)
 

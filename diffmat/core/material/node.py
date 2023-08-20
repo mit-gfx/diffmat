@@ -3,16 +3,17 @@ import inspect
 
 import torch as th
 
-from .base import BaseParameter, BaseMaterialNode
-from .types import NodeFunction, ParamValue, Constant, MultiInputDict, MultiOutputDict
+from diffmat.core.base import BaseParameter
+from diffmat.core.types import NodeFunction, ParamValue, Constant, MultiInputDict, MultiOutputDict
+from .base import BaseMaterialNode
 
 
 class MaterialNode(BaseMaterialNode):
     """Differentiable material graph node class.
     """
-    def __init__(self, name: str, res: int, func: NodeFunction, params: List[BaseParameter] = [],
-                 inputs: MultiInputDict = {}, outputs: MultiOutputDict = {},
-                 seed: int = 0, **kwargs):
+    def __init__(self, name: str, type: str, res: int, func: NodeFunction,
+                 params: List[BaseParameter] = [], inputs: MultiInputDict = {},
+                 outputs: MultiOutputDict = {}, seed: int = 0, **kwargs):
         """Initialize a material graph node.
 
         Args:
@@ -27,7 +28,7 @@ class MaterialNode(BaseMaterialNode):
             seed (int, optional): Random seed to node function. Defaults to 0.
             kwargs (Dict[str, Any]): Keyword arguments to pass into the parent class constructor.
         """
-        super().__init__(name, res, params=params, inputs=inputs, outputs=outputs,
+        super().__init__(name, type, res, params=params, inputs=inputs, outputs=outputs,
                          seed=seed, **kwargs)
 
         self.func = func
@@ -54,12 +55,15 @@ class MaterialNode(BaseMaterialNode):
         self._required_params = all_params & covered_param_names
 
     def evaluate(self, *img_list: Optional[th.Tensor], exposed_params: Dict[str, ParamValue] = {},
-                 **options: Constant) -> Union[th.Tensor, Tuple[th.Tensor, ...]]:
+                 benchmarking: bool = False, **options: Constant) -> \
+                     Union[th.Tensor, Tuple[th.Tensor, ...]]:
         """Evaluate the node using the stored node function.
 
         Args:
+            img_list (List[Tensor], optional): Input texture maps. Defaults to [].
             exposed_params (Dict[str, ParamValue], optional): Exposed parameter values of the
                 material graph. Defaults to {}.
+            benchmarking (bool, optional): Whether or not to benchmark runtime. Defaults to False.
             options (Dict[str, Constant], optional): Global options from the material graph, for
                 example, the `use_alpha` flag that enables the alpha channel.
 
@@ -68,11 +72,19 @@ class MaterialNode(BaseMaterialNode):
         """
         # Compute the dictionary that maps node parameter names to values
         node_params, _ = self._evaluate_node_params(exposed_params)
-        seed_offset: int = node_params['seed']
+        seed_offset: int = node_params.get('seed', 0)
 
         # Discard parameters not needed by the node function
         node_params = {key: val for key, val in node_params.items()
                        if key in self._required_params}
+
+        # For benchmarking mode, detach input images and node parameters from the original graph
+        # to construct an independent computation graph for the node
+        if benchmarking:
+            _ct = lambda v: v.detach().clone().requires_grad_() \
+                            if isinstance(v, th.Tensor) and th.is_floating_point(v) else v
+            img_list = [_ct(img) for img in img_list]
+            node_params = {key: _ct(val) for key, val in node_params.items()}
 
         # Add node-specific options to the global option dictionary and only keep those required
         options = options.copy()
@@ -95,7 +107,7 @@ class MaterialNode(BaseMaterialNode):
 class ExternalInputNode(MaterialNode):
     """Subclass of nodes that read externally generated textures as input.
     """
-    def __init__(self, name: str, res: int, func: NodeFunction,
+    def __init__(self, name: str, type: str, res: int, func: NodeFunction,
                  inputs: MultiInputDict = {}, outputs: MultiOutputDict = {}, **kwargs):
         """Initialize an external input node.
 
@@ -111,7 +123,7 @@ class ExternalInputNode(MaterialNode):
             seed (int, optional): Random seed to node function. Defaults to 0.
             kwargs (Dict[str, Any]): Keyword arguments to pass into the parent class constructor.
         """
-        super().__init__(name, res, func, inputs=inputs, outputs=outputs, **kwargs)
+        super().__init__(name, type, res, func, inputs=inputs, outputs=outputs, **kwargs)
 
     def evaluate(self, external_input_dict: Dict[str, th.Tensor], **options: Constant) -> \
             Union[th.Tensor, Tuple[th.Tensor, ...]]:

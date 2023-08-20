@@ -1,0 +1,13 @@
+func:
+  - 'math.floor(math.floor({Input}) * 0.5)'
+  - ''
+  - '({Input}.floor() * 0.5).floor()'
+  - '({Input}.floor() * 0.5).floor()'
+
+output_level: [0, 1, 2, 3]
+
+input: [Input]
+
+promotion_mask: [False, False, False]
+
+param: null

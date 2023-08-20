@@ -1,14 +1,15 @@
 from abc import ABC, abstractmethod
 from collections import deque
+from operator import itemgetter
 from xml.etree import ElementTree as ET
-from typing import Union, List, Tuple, Dict, Type, Optional, Generic, TypeVar
+from typing import Union, List, Tuple, Set, Dict, Type, Optional, Generic, TypeVar
 import logging
 
-from .types import PathLike, Constant, NodeData
-from .util import NameAllocator
-from .util import get_value, get_param_type, lookup_value_type, is_image
-from ..core.base import BaseEvaluableObject as BEO
-from ..core.base import BaseGraph, BaseMaterialNode, BaseFunctionNode, BaseParameter
+from diffmat.core.base import BaseEvaluableObject as BEO
+from diffmat.core.base import BaseGraph, BaseNode, BaseParameter
+from diffmat.translator.types import PathLike, Constant, NodeData
+from diffmat.translator.util import NameAllocator
+from diffmat.translator.util import get_value, get_param_type, lookup_value_type, is_image
 
 
 # Type variables
@@ -82,7 +83,8 @@ class BaseParamTranslator(BaseTranslator):
         super().__init__(root)
 
         # Note that the parameter name in Substance Designer, i.e., 'sbs_name', is allowed to be
-        # 'None'. In that case, the parameter is considered local only.
+        # 'None'. In that case, the parameter is considered local only and will not perform any
+        # back-translation.
         self.sbs_name = sbs_name or (root and get_value(root.find('name'))) or ''
         self.name = name or self.sbs_name
         self.default = default
@@ -138,7 +140,7 @@ class BaseNodeTranslator(BaseTranslator, Generic[NCT]):
         ...
 
     @abstractmethod
-    def translate(self, **obj_kwargs) -> Union[BaseMaterialNode, BaseFunctionNode]:
+    def translate(self, **obj_kwargs) -> BaseNode:
         """Translates the XML tree into a graph node object.
         """
         ...
@@ -147,12 +149,14 @@ class BaseNodeTranslator(BaseTranslator, Generic[NCT]):
 class BaseGraphTranslator(BaseTranslator, Generic[NTT]):
     """Base translator class for material and function node graphs.
     """
-    def __init__(self, root: Optional[Union[PathLike, ET.Element]]):
+    def __init__(self, root: Optional[Union[PathLike, ET.Element]], canonicalize: bool = False):
         """Initialize the base graph translator.
 
         Args:
             root (Optional[PathLike | Element]): Path to the source XML file, or a root node of
                 the XML tree.
+            canonicalize (bool, optional): Whether to canonicalize the graph structure by sorting
+                the nodes in DFS order. Defaults to False.
         """
         super().__init__(root)
 
@@ -163,6 +167,10 @@ class BaseGraphTranslator(BaseTranslator, Generic[NTT]):
         self.graph: Dict[int, NodeData] = {}
         self._init_graph()
         self._prune_graph()
+
+        # Sort the graph nodes in a canonical order
+        if canonicalize:
+            self._sort_graph()
 
         # Initialize node translators and node connections
         self._init_node_translators()
@@ -194,6 +202,29 @@ class BaseGraphTranslator(BaseTranslator, Generic[NTT]):
 
         # Update the graph data structure to remove unvisited nodes
         self.graph = {uid: graph[uid] for uid in visited}
+
+    def _sort_graph(self):
+        """Sort the graph nodes in a canonical DFS order.
+        """
+        graph, key_func = self.graph, itemgetter(0)
+        sorted_uids: List[int] = []
+        visited: Set[int] = set()
+
+        # DFS function at each node
+        def dfs(uid: int):
+            for in_data in sorted(graph[uid]['in'], key=key_func):
+                next_uid = in_data[1]
+                if next_uid not in visited:
+                    dfs(next_uid)
+            visited.add(uid)
+            sorted_uids.append(uid)
+
+        # Run DFS and re-order graph nodes
+        output_uids = [uid for uid, n in graph.items() if n['is_output']]
+
+        for uid in sorted(output_uids):
+            dfs(uid)
+        self.graph = {uid: graph[uid] for uid in sorted_uids}
 
     @abstractmethod
     def _init_node_translators(self):

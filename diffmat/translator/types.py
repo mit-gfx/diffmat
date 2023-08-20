@@ -1,6 +1,7 @@
 from typing import Union, List, Tuple, Dict, Optional
 
-from ..core.types import Constant, ParamValue, NodeFunction, PathLike, DeviceType
+from diffmat.core.types import \
+    Constant, ParamValue, IntParamValue, NodeFunction, PathLike, DeviceType
 
 
 # Type aliases

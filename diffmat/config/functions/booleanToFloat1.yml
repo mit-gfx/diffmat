@@ -1,0 +1,13 @@
+func:
+  - 'float({Boolean})'
+  - ''
+  - '{Boolean}.float()'
+  - '{Boolean}.float()'
+
+output_level: [0, 1, 2, 3]
+
+input: [Boolean]
+
+promotion_mask: [False, False, False]
+
+param: null

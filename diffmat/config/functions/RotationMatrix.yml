@@ -1,0 +1,13 @@
+func:
+  - 'rotation_matrix({RotationW})'
+  - ''
+  - 'rotation_matrix({RotationW})'
+  - 'rotation_matrix({RotationW})'
+
+output_level: [0, 1, 2, 3]
+
+input: [RotationW]
+
+promotion_mask: [False, False, False]
+
+param: null

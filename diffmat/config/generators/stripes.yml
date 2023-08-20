@@ -1,0 +1,42 @@
+func: stripes
+
+input: null
+
+output:
+  Stripes: ''
+
+param:
+- type: integer
+  sbs_name: Stripes
+  name: num
+  sbs_default: 10
+  scale: [1, 100]
+  quantize: True
+
+- type: default
+  sbs_name: Width
+  name: width
+  default: 0.5
+
+- type: default
+  sbs_name: Softness
+  name: softness
+  default: 0.0
+
+- type: integer
+  sbs_name: Shift
+  name: shift
+  sbs_default: 10
+  scale: [0, 20]
+  quantize: True
+
+- type: list_index
+  sbs_name: Align
+  name: align
+  default: edges
+  source_list: [edges, center]
+
+- type: constant
+  sbs_name: Filtering
+  name: filtering
+  default: True

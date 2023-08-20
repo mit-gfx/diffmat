@@ -23,10 +23,6 @@ Below is a work-in-progress list of Substance Designer's material node functiona
 - The "Corner Type" parameter ("Round" or "Angular").
 - The "Use Custom Curve" switch that enables an optional height curve input slot.
 
-## Make It Tile Patch
-
-- Before we implement generic *FX-Map* nodes, individual patterns (stamps) whose sizes exceed the input image will tile incorrectly.
-
 ## Quantize
 
 - The "Offset", "Slope" and "Slope Curve" options, which have just been introduced in the latest SD update.

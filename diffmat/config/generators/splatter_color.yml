@@ -1,0 +1,106 @@
+func: splatter_color
+
+input:
+  Source: img_rgb
+  Source_alpha: img_a
+
+output:
+  Splatter: ''
+
+param:
+- type: default
+  sbs_name: Pattern_size_width
+  name: pattern_width
+  sbs_default: 100.0
+  scale: 1000.0
+
+- type: default
+  sbs_name: Pattern_size_height
+  name: pattern_height
+  sbs_default: 100.0
+  scale: 1000.0
+
+- type: default
+  sbs_name: Rotation
+  name: rotation
+  sbs_default: 0.0
+  scale: [360.0, 360.0]
+
+- type: default
+  sbs_name: Rotation_Var
+  name: rotation_variation
+  sbs_default: 0.0
+  scale: 360.0
+
+- type: default
+  sbs_name: Gain
+  name: opacity
+  sbs_default: 1.0
+  scale: 10.0
+
+- type: default
+  sbs_name: Pan_X
+  name: offset_x
+  sbs_default: 0.0
+  scale: [-100.0, 100.0]
+
+- type: default
+  sbs_name: Pan_Y
+  name: offset_y
+  sbs_default: 0.0
+  scale: [-100.0, 100.0]
+
+- type: default
+  sbs_name: Disorder
+  name: disorder
+  sbs_default: 0.0
+  scale: 100.0
+
+- type: integer
+  sbs_name: Grid_Number
+  name: octave
+  sbs_default: 4
+  scale: 8
+
+- type: default
+  sbs_name: Disorder_Angle
+  name: disorder_angle
+  sbs_default: 0.0
+  scale: 360.0
+
+- type: constant
+  sbs_name: Disorder_Random
+  name: disorder_random
+  default: False
+
+- type: default
+  sbs_name: Size_Var
+  name: size_variation
+  sbs_default: 0.0
+  scale: 100.0
+
+- type: list_index
+  sbs_name: image_input_filtering
+  name: filter_mode
+  default: bilinear_mipmap
+  source_list: [bilinear_mipmap, bilinear, nearest]
+
+- type: default
+  sbs_name: Output_Min
+  name: output_min
+  default: 0.0
+
+- type: default
+  sbs_name: Output_Max
+  name: output_max
+  default: 1.0
+
+- type: default
+  sbs_name: Background_Color
+  name: background_color
+  default: [0.0, 0.0, 0.0, 1.0]
+
+- type: default
+  sbs_name: Color_Var
+  name: color_variation
+  default: 0.0

@@ -1,0 +1,13 @@
+func:
+  - 'discrete_ab({A}, {B}, {Probability}, per_pixel, size)'
+  - ''
+  - 'discrete_ab({A}, {B}, {Probability}, per_pixel, size)'
+  - 'discrete_ab({A}, {B}, {Probability}, per_pixel, size)'
+
+output_level: [0, 1, 2, 3]
+
+input: [A, B, Probability]
+
+promotion_mask: [False, False, False]
+
+param: null

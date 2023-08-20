@@ -1,0 +1,10 @@
+# The configuration file for pixel processors only has a parameter section since others are handled
+# by the translator class itself
+output: null
+
+param:
+  - type: list_index
+    sbs_name: colorswitch
+    name: mode
+    default: color
+    source_list: [gray, color]

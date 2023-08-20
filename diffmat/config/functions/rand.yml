@@ -1,2 +1,13 @@
-# Only input connector info is used for rand nodes
+func:
+  - 'rand(per_pixel, size) * {a}'
+  - ''
+  - 'rand(per_pixel, size) * {a}'
+  - 'rand(per_pixel, size) * {a}'
+
+output_level: [0, 1, 2, 3]
+
 input: [a]
+
+promotion_mask: [False, False, False]
+
+param: null

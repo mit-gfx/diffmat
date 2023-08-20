@@ -1,0 +1,25 @@
+func: gradient_linear_3
+
+input: null
+
+output:
+  output: ''
+
+param:
+- type: integer
+  sbs_name: Tiling
+  name: tiling
+  sbs_default: 1
+  scale: [1, 16]
+  quantize: True
+
+- type: default
+  sbs_name: position
+  name: position
+  default: 0.5
+
+- type: list_index
+  sbs_name: rotation
+  name: rotation
+  default: 0
+  source_list: [0, 90]

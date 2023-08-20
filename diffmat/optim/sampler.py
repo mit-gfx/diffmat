@@ -1,21 +1,23 @@
+from functools import partial
 from pathlib import Path
 from typing import Tuple, List, Dict, Union, Optional, Callable
 
 import torch as th
 
-from ..core.base import BaseEvaluableObject
-from ..core.graph import MaterialGraph
-from ..core.io import write_image
-from ..core.render import Renderer
-from ..core.types import Constant, PathLike, DeviceType
-from ..translator.util import load_config
+from diffmat.core.base import BaseEvaluableObject
+from diffmat.core.material import MaterialGraph, Renderer
+from diffmat.core.io import write_image
+from diffmat.core.types import Constant, PathLike, DeviceType
+from diffmat.core.util import FILTER_OFF
+from diffmat.translator.util import load_config
 
 
 class ParamSampler(BaseEvaluableObject):
     """Randomly perturb or sample the optimizable parameters in a differentiable material graph.
     """
     def __init__(self, graph: MaterialGraph, mode: str = 'perturb', algo: str = 'uniform',
-                 algo_kwargs: Dict[str, Constant] = {}, seed: int = 0, level_exposed: int = 2,
+                 algo_kwargs: Dict[str, Constant] = {}, seed: int = 0,
+                 filter_exposed: int = FILTER_OFF, filter_generator: int = FILTER_OFF,
                  device: DeviceType = 'cpu', **kwargs):
         """Initialize the random parameter sampler.
 
@@ -33,11 +35,18 @@ class ParamSampler(BaseEvaluableObject):
                 `mu`, `sigma`: Mean/stddev values of a normal distribution.
                 Defaults to {}.
             seed (int, optional): Random seed. Defaults to 0.
-            level_exposed (int, optional): Option for sampling some or all optimizable parameters
+            filter_exposed (int, optional): Option for sampling some or all optimizable parameters
                 in the graph.
                 `2 = all`: all parameters will be sampled;
                 `1 = exclusive`: only exposed parameters are sampled;
                 `0 = complement`: only non-exposed parameters are sampled.
+                Defaults to 2.
+            filter_quantize (int, optional): Additional constraint on sampled parameters.
+                `2 = all`: all parameters will be sampled;
+                `1 = exclusive`: only sample optimizable discrete parameters (quantized continuous
+                    parameters);
+                `0 = complement`: only sample continuous parameters that do not undergo
+                    quantization.
                 Defaults to 2.
             device (DeviceType, optional): Device placement of the random parameter sampler, the
                 same `device` parameter for creating PyTorch tensors are applicable here.
@@ -49,19 +58,31 @@ class ParamSampler(BaseEvaluableObject):
         """
         if mode not in ('perturb', 'sample'):
             raise ValueError("Sampler mode must be either 'perturb' or 'sample'")
-        if not graph.num_parameters():
-            raise ValueError('The material graph does not have optimizable parameters')
 
         super().__init__(device=device, **kwargs)
 
         self.graph = graph
         self.mode = mode
-        self.level_kwargs = {'level_exposed': level_exposed}
+
+        # Set functions for graph parameter reading and writing
+        param_kwargs = {
+            'filter_exposed': filter_exposed, 'filter_generator': filter_generator,
+            'filter_requires_grad': FILTER_OFF
+        }
+        self._get_parameters = partial(graph.get_parameters_as_tensor, **param_kwargs)
+        self._set_parameters = partial(graph.set_parameters_from_tensor, **param_kwargs)
+        self._num_parameters = partial(graph.num_parameters, **param_kwargs)
+        self._get_all_parameters = partial(
+            graph.get_parameters_as_tensor, filter_requires_grad=FILTER_OFF)
+
+        # Check if there are parameters that pass the user's filter
+        num_params = self._num_parameters()
+        if not num_params:
+            raise ValueError('The material graph does not have optimizable parameters')
 
         # Show graph info
-        graph_params = graph.parameters(**self.level_kwargs)
         self.logger.info(f'Graph name: {graph.name}  #nodes: {len(graph.nodes)}  '
-                         f'#params: {sum(param.numel() for param in graph_params)}')
+                         f'#params: {num_params}')
 
         # Setup the sampling function
         self.func = self._get_sampling_func(algo, **algo_kwargs)
@@ -95,7 +116,7 @@ class ParamSampler(BaseEvaluableObject):
         Raises:
             ValueError: Unrecognized sampling algorithm.
 
-        Returns:
+         Returns:
             Callable[[Tensor], Tensor]: A sampling function that takes as input the original
                 parameters and generates sampled or perturbed parameters within [0, 1].
         """
@@ -149,8 +170,7 @@ class ParamSampler(BaseEvaluableObject):
             Tensor: Sampled parameter values of size `(batch_size, num_parameters)`.
         """
         # Starting parameters
-        params = params if params is not None else \
-                 self.graph.get_parameters_as_tensor(**self.level_kwargs)
+        params = params if params is not None else self._get_parameters()
 
         # Perform sampling using the internal random number generator state
         with self.temp_rng(self.rng_state):
@@ -193,7 +213,6 @@ class ParamSampler(BaseEvaluableObject):
             raise ValueError('Number of cases must be a positive integer')
 
         graph = self.graph
-        level_kwargs = self.level_kwargs
 
         # Create the output image folders
         result_dir = Path(result_dir)
@@ -212,7 +231,7 @@ class ParamSampler(BaseEvaluableObject):
         with self.temp_rng(self.rng_state):
 
             # Get the current parameter setting
-            params = graph.get_parameters_as_tensor(**level_kwargs)
+            params = self._get_parameters()
 
             # Perturb/sample new parameters using the worker function
             img_list: List[th.Tensor] = []
@@ -221,7 +240,7 @@ class ParamSampler(BaseEvaluableObject):
             for it in range(num):
                 new_params = self.func(params)
                 new_params_list.append(new_params)
-                graph.set_parameters_from_tensor(new_params, **level_kwargs)
+                self._set_parameters(new_params)
                 graph.set_parameters_from_config(param_config)
 
                 # Run forward evaluation using new parameters
@@ -235,10 +254,10 @@ class ParamSampler(BaseEvaluableObject):
                     self._save_images(it, *maps, render, result_dir=result_dir,
                                       img_format=img_format)
                     param_file = result_dir / 'param' / f'params_{it}.pth'
-                    th.save({'param': graph.get_parameters_as_tensor()}, param_file)
+                    th.save({'param': self._get_all_parameters()}, param_file)
 
             # Restore the initial parameters
-            graph.set_parameters_from_tensor(params, **level_kwargs)
+            self._set_parameters(params)
 
             # Record the current state
             self.rng_state = self.get_rng_state()

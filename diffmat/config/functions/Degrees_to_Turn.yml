@@ -1,0 +1,13 @@
+func:
+  - '{input} / 360'
+  - '[v / 360 for v in {input}]'
+  - '{input} / 360'
+  - '{input} / 360'
+
+output_level: [0, 1, 2, 3]
+
+input: [input]
+
+promotion_mask: [False, False, False]
+
+param: null

@@ -1,0 +1,94 @@
+func: color_match
+
+input:
+  input: img_in
+  input_src_color: img_src_color
+  input_target_color: img_target_color
+  mask_input: img_mask
+
+output:
+  output: output
+  mask: mask
+
+param:
+- type: list_index
+  sbs_name: source_color_mode
+  name: src_color_mode
+  default: average
+  source_list: [average, parameter, input]
+
+- type: default
+  sbs_name: src_color
+  name: src_color
+  default: [0.5, 0.5, 0.5]
+
+- type: list_index
+  sbs_name: target_color_mode
+  name: target_color_mode
+  default: parameter
+  source_list: [parameter, input]
+
+- type: default
+  sbs_name: target_color
+  name: target_color
+  default: [0.5, 0.5, 0.5]
+
+- type: constant
+  sbs_name: custom_color_variation
+  name: color_variation
+  default: False
+
+- type: default
+  sbs_name: variation_hue
+  name: hue_variation
+  default: 0.0
+  scale: 360.0
+
+- type: default
+  sbs_name: variation_chroma
+  name: chroma_variation
+  default: 1.0
+
+- type: default
+  sbs_name: variation_luma
+  name: luma_variation
+  default: 1.0
+
+- type: constant
+  sbs_name: use_mask
+  name: use_mask
+  default: True
+
+- type: list_index
+  sbs_name: mask_mode
+  name: mask_mode
+  default: parameter
+  source_list: [parameter, input]
+
+- type: default
+  sbs_name: mask_hue_range
+  name: mask_hue_range
+  sbs_default: 30.0
+  scale: 360.0
+
+- type: default
+  sbs_name: mask_chroma_range
+  name: mask_chroma_range
+  default: 0.5
+
+- type: default
+  sbs_name: mask_luma_range
+  name: mask_luma_range
+  default: 0.5
+
+- type: default
+  sbs_name: mask_blur
+  name: mask_blur
+  default: 0.0
+  scale: 2.0
+
+- type: default
+  sbs_name: mask_smoothness
+  name: mask_smoothness
+  default: 0.0
+  scale: 2.0

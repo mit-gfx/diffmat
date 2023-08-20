@@ -1,0 +1,80 @@
+# Quadrant node
+input:
+  output0: input_0
+  output1: input_1
+  output2: input_2
+  output3: input_3
+
+output: null
+
+param:
+  - type: default
+    sbs_name: opacity
+    name: color
+    default: [1.0, 1.0, 1.0, 1.0]
+
+  - type: default
+    sbs_name: branchoffset
+    name: branch_offset
+    default: [0.0, 0.0]
+
+  - type: list_index
+    sbs_name: patterntype
+    name: type
+    default: none
+    source_list:
+      - none
+      - image
+      - square
+      - disc
+      - paraboloid
+      - bell
+      - gaussian
+      - thorn
+      - pyramid
+      - brick
+      - gradation
+      - waves
+      - half_bell
+      - ridged_bell
+      - crescent
+      - capsule
+      - cone
+      - gradation_offset
+
+  - type: default
+    sbs_name: frameoffset
+    name: pattern_offset
+    default: [0.0, 0.0]
+
+  - type: default
+    sbs_name: patternsize
+    name: size
+    default: [1.0, 1.0]
+
+  - type: default
+    sbs_name: patternrotation
+    name: rotation
+    default: 0.0
+
+  - type: default
+    sbs_name: patternsuppl
+    name: variation
+    default: 0.0
+
+  - type: list_index
+    sbs_name: blendingmode
+    name: blending
+    default: add
+    source_list: [add, max, copy]
+
+  - type: list_index
+    sbs_name: imagefiltering
+    name: filtering
+    default: bilinear_mipmap
+    source_list: [bilinear_mipmap, bilinear, nearest]
+
+  - type: constant
+    sbs_name: imageindex
+    name: image_index
+    default: 0

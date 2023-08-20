@@ -13,10 +13,11 @@ param:
   default: automatic
   source_list: [automatic, manual]
 
-- type: constant
+- type: integer
   sbs_name: tile
   name: tile
   sbs_default: [1, 1]
+  scale: [1, 16]
 
 - type: constant
   sbs_name: tile_safe_rotation

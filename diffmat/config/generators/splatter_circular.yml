@@ -1,0 +1,281 @@
+func: splatter_circular
+
+input:
+  background: img_bg
+  pattern_input_1: img_in_1
+  pattern_input_2: img_in_2
+  pattern_input_3: img_in_3
+  pattern_input_4: img_in_4
+  pattern_input_5: img_in_5
+  pattern_input_6: img_in_6
+
+output:
+  Splatter_Circular: ''
+
+param:
+- type: integer
+  sbs_name: pattern_amount
+  name: pattern_num
+  sbs_default: 10
+  scale: [1, 64]
+  quantize: True
+
+- type: default
+  sbs_name: pattern_amount_random
+  name: pattern_num_random
+  default: 0.0
+
+- type: integer
+  sbs_name: pattern_amount_random_min
+  name: pattern_num_min
+  sbs_default: 1
+  scale: [1, 10]
+  quantize: True
+
+- type: integer
+  sbs_name: ring_amount
+  name: ring_num
+  sbs_default: 1
+  scale: [1, 10]
+  quantize: True
+
+- type: list_index
+  sbs_name: pattern
+  name: pattern
+  default: paraboloid
+  source_list:
+  - none
+  - image
+  - square
+  - disc
+  - paraboloid
+  - bell
+  - gaussian
+  - thorn
+  - pyramid
+  - brick
+  - gradation
+  - waves
+  - half_bell
+  - ridged_bell
+  - crescent
+  - capsule
+  - cone
+  - gradation_offset
+
+- type: constant
+  sbs_name: pattern_input_number
+  name: input_number
+  default: 1
+
+- type: list_index
+  sbs_name: pattern_input_distribution
+  name: input_distribution
+  default: random
+  source_list: [random, by_pattern, by_ring]
+
+- type: list_index
+  sbs_name: image_input_filtering
+  name: input_filter_mode
+  default: bilinear_mipmap
+  source_list: [bilinear_mipmap, bilinear, nearest]
+
+- type: default
+  sbs_name: pattern_specific
+  name: pattern_specific
+  default: 0.0
+
+- type: constant
+  sbs_name: pattern_symmetry_random
+  name: symmetry_random
+  default: 0.0
+
+- type: list_index
+  sbs_name: pattern_symmetry_random_mode
+  name: symmetry_random_mode
+  default: both
+  source_list: [both, horizontal, vertical]
+
+- type: default
+  sbs_name: radius
+  name: radius
+  default: 0.25
+
+- type: default
+  sbs_name: radius_random
+  name: radius_random
+  default: 0.0
+
+- type: default
+  sbs_name: ring_radius_mutliplier
+  name: radius_multiplier
+  default: 1.0
+
+- type: default
+  sbs_name: angle_random
+  name: angle_random
+  default: 0.0
+
+- type: default
+  sbs_name: spiral_factor
+  name: spiral_factor
+  default: 0.0
+
+- type: default
+  sbs_name: spread
+  name: spread
+  sbs_default: 1.0
+  scale: 2.0
+
+- type: default
+  sbs_name: position_offset_direction
+  name: directional_offset
+  default: 0.0
+
+- type: default
+  sbs_name: global_offset
+  name: global_offset
+  default: [0.0, 0.0]
+
+- type: constant
+  sbs_name: connect_patterns
+  name: connect_patterns
+  default: False
+
+- type: default
+  sbs_name: pattern_size_connected
+  name: size_connected
+  default: [1.0, 0.1]
+
+- type: default
+  sbs_name: pattern_size
+  name: size
+  default: [0.1, 0.1]
+
+- type: default
+  sbs_name: pattern_size_random
+  name: size_random
+  default: [0.0, 0.0]
+
+- type: default
+  sbs_name: pattern_scale
+  name: scale
+  sbs_default: 1.0
+  scale: 2.0
+
+- type: default
+  sbs_name: pattern_scale_random
+  name: scale_random
+  default: 0.0
+
+- type: default
+  sbs_name: pattern_scale_by_pattern_number
+  name: scale_by_pattern_number
+  default: 0.0
+
+- type: constant
+  sbs_name: pattern_scale_by_pattern_number_invert
+  name: scale_by_pattern_number_invert
+  default: False
+
+- type: default
+  sbs_name: pattern_scale_by_ring_number
+  name: scale_by_ring_number
+  default: 0.0
+
+- type: constant
+  sbs_name: pattern_scale_by_ring_number_invert
+  name: scale_by_ring_number_invert
+  default: False
+
+- type: default
+  sbs_name: pattern_rotation
+  name: pattern_rotation
+  default: 0.0
+
+- type: default
+  sbs_name: pattern_rotation_random
+  name: pattern_rotation_random
+  default: 0.0
+
+- type: list_index
+  sbs_name: pattern_rotation_pivot
+  name: pattern_rotation_pivot
+  default: center
+  source_list: [center, min_x, max_x, min_y, max_y]
+
+- type: constant
+  sbs_name: center_orientation
+  name: center_orientation
+  default: True
+
+- type: default
+  sbs_name: ring_rotation
+  name: ring_rotation
+  default: 0.0
+
+- type: default
+  sbs_name: ring_rotation_random
+  name: ring_rotation_random
+  default: 0.0
+
+- type: default
+  sbs_name: ring_rotation_offset
+  name: ring_rotation_offset
+  default: 0.0
+
+- type: default
+  sbs_name: pattern_color
+  name: color
+  default: 1.0
+
+- type: default
+  sbs_name: luminance_random
+  name: color_random
+  default: 0.0
+
+- type: default
+  sbs_name: luminance_by_scale
+  name: color_by_scale
+  default: 0.0
+
+- type: default
+  sbs_name: luminance_by_pattern_number
+  name: color_by_pattern_number
+  default: 0.0
+
+- type: constant
+  sbs_name: luminance_by_pattern_number_invert
+  name: color_by_pattern_number_invert
+  default: False
+
+- type: default
+  sbs_name: luminance_by_ring_number
+  name: color_by_ring_number
+  default: 0.0
+
+- type: constant
+  sbs_name: luminance_by_ring_number_invert
+  name: color_by_ring_number_invert
+  default: False
+
+- type: constant
+  sbs_name: random_mask
+  name: random_mask
+  default: 0.0
+
+- type: default
+  sbs_name: background_color
+  name: background_color
+  default: 0.0
+
+- type: list_index
+  sbs_name: blending_mode
+  name: blending_mode
+  default: max
+  source_list: [add, '', max, add_sub]
+
+- type: default
+  sbs_name: global_opacity
+  name: global_opacity
+  default: 1.0

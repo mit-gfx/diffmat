@@ -1,304 +1,38 @@
-from typing import Union, Tuple, List, Dict, Iterable, TypeVar, Callable, Any
-import inspect
-import functools
+from typing import Union, Tuple, List, Dict, Iterable
+import logging
+import time
 
 import torch as th
+import numpy as np
 
-from .types import Constant, ParamValue
+from diffmat.core.types import Constant, ParamValue, FloatArray, IntArray
 
-
-# Define node function type variable
-FT = TypeVar('FT', bound=Callable[..., Any])
 
 # Debug switch for enabling/disabling debugging-related contents
-DEBUG = True
+DEBUG = False
+
+# Optional filter value constants
+FILTER_OFF = -1
+FILTER_NO = 0
+FILTER_YES = 1
 
 
-def input_check(num_inputs: int, channel_specs: str = '', reduction: str = 'all',
-                reduction_range: int = 0, class_method: bool = False) -> Callable[[FT], FT]:
-    """Node function decorator that checks whether a certain number of inputs are 4D torch tensors.
+# Tensor conversion related helper functions
+def to_tensor(a: Union[FloatArray, IntArray]) -> th.Tensor:
+    return th.as_tensor(a, dtype=th.float32)
 
-    The `channel_specs` option defines whether inputs are interpreted as color or gray
-    images. Images of the same type are optionally required to have matching numbers of channels
-    (along dimension 1). See the 
+def to_numpy(a: Union[FloatArray, IntArray]) -> np.ndarray:
+    return a.detach().cpu().numpy() if isinstance(a, th.Tensor) else np.asarray(a)
 
-    The `reduction` option specifies if all/any of those inputs must be a tensor.
+def to_const(a: Union[FloatArray, IntArray]) -> Constant:
+    return a.detach().cpu().tolist() if isinstance(a, th.Tensor) else \
+           a.tolist() if isinstance(a, np.ndarray) else a
 
-    Args:
-        num_inputs (int): Number of input tensors to inspect. Note that it could be more than
-            the number of positional arguments in a node function. In that case, the first several
-            keyword arguments will be inspected as well.
-        channel_specs (str, optional): Specifies the type of each input tensor, i.e., whether it
-            should represent a color or a grayscale image. The following individual characters are
-            allowed in the string:
-                `.`: No constraint (either color or grayscale).
-                `c`: Color image. All color images must have matching numbers of channels (size of
-                    tensor along `dim=1`)
-                `g`: Grayscale image.
-                `-`: Either color or grayscale, but all images must have matching numbers of
-                    channels.
-            The channel specification string should not be longer than `num_inputs`. If the string
-            is shorter, missing characters are considered as `.`'s.
-            Defaults to ''.
-        reduction (str, optional): Specifies if 'all' or 'any' of the first several inputs to the
-            node function must be a tensor. Defaults to 'all'.
-        reduction_range (int, optional): Number of inputs in the reduction range. Defaults to 0.
-        class_method (bool, optional): Whether the wrapped function is a class method (that
-            receives an additional leading `self` or `cls` argument). Defaults to False.
+def to_tensor_and_const(a: Union[FloatArray, IntArray]) -> Tuple[th.Tensor, Constant]:
+    return to_tensor(a), to_const(a)
 
-    Raises:
-        ValueError: Unknown reduction mode.
-        ValueError: Channel specification string is longer than the number of checked inputs.
-        ValueError: Unknown channel specifiction option (invalid character).
-        TypeError: 'all' reduction check fails as one input tensor is left empty.
-        TypeError: 'any' reduction check fails as no input tensor is found.
-
-    Returns:
-        Decorator: The node function decorator.
-    """
-    # Verify valid reduction modes
-    if reduction not in ('all', 'any'):
-        raise ValueError(f'Unrecognized reduction mode: {reduction}')
-
-    # Verify color channel specifications
-    valid_channel_specs = 'cg.-'
-    if len(channel_specs) > num_inputs:
-        raise ValueError(f"Channel specification string '{channel_specs}' is longer than the "
-                         f"number of inputs to check ({num_inputs})")
-    for c in channel_specs:
-        if c not in valid_channel_specs:
-            raise ValueError(f'Unknown channel specification option: {c}')
-
-    def decorator(func: FT) -> FT:
-        @functools.wraps(func)
-        def wrapper(*args: ParamValue, **kwargs: ParamValue) -> Union[th.Tensor, Tuple[th.Tensor]]:
-
-            # Create the mapping from arguments to values and extract the first 'num_inputs' values
-            bound_args = inspect.signature(func).bind(*args, **kwargs)
-            bound_args.apply_defaults()
-            start_idx = int(class_method > 0)
-            args_to_check = list(bound_args.arguments.items())[start_idx: start_idx + num_inputs]
-
-            # Check whether non-empty inputs are 4D torch tensors
-            func_name = func.__name__
-            check_4d_tensors(args_to_check, func_name)
-
-            # Check whether non-empty inputs have identical shapes (last two dimensions only)
-            tensor_mask = [isinstance(pair[1], th.Tensor) for pair in args_to_check]
-            imgs_to_check: List[Tuple[str, th.Tensor]] = \
-                [pair for pair, bit in zip(args_to_check, tensor_mask) if bit]
-            shapes_to_check = [(name, list(img.shape[2:])) for name, img in imgs_to_check]
-            check_identical_values(
-                shapes_to_check, func_name, val_description='spatial dimensions')
-
-            # Validate against color channel specifications
-            specs = ''.join([flag for flag, bit in zip(channel_specs, tensor_mask) if bit])
-
-            if specs:
-                ## The number of channels of each input image must match the corresponding flag in
-                ## spec string
-                check_image_types(imgs_to_check, func_name, types=specs)
-
-                ## Images of 'c' or '-' flags must have identical numbers of channels
-                for flag in 'c-':
-                    iterator = zip(imgs_to_check, specs)
-                    channels_to_check = \
-                        [(name, img.shape[1]) for (name, img), c in iterator if c == flag]
-                    check_identical_values(
-                        channels_to_check, func_name, val_description='numbers of channels')
-
-            # Perform reduction in the specified range and report errors if any
-            if reduction_range > 0:
-                flags = [val is not None for _, val in args_to_check[:reduction_range]]
-
-                ## 'all' means all arguments in the checking range must be 4D tensors
-                if reduction == 'all' and not all(flags):
-                    failed_name = args_to_check[flags.index(False)][0]
-                    raise TypeError(f"Empty input '{failed_name}' to function '{func_name}'")
-
-                ## 'any' means at least one argument in the checking range must be a 4D tensor
-                elif reduction == 'any' and not any(flags):
-                    raise TypeError(f"Function '{func_name}' did not receive input among the "
-                                    f"first {num_inputs} input arguments")
-
-            # Run the node function
-            return func(*args, **kwargs)
-
-        return wrapper
-    return decorator
-
-
-def input_check_all_positional(class_method: bool = False, channel_specs: str = '') -> \
-        Callable[[FT], FT]:
-    """A special decorator that checks whether all positional arguments of a function are 4D torch
-    tensors.
-
-    Args:
-        class_method (bool, optional): Whether the wrapped function is a class method (that
-            receives an additional leading `self` or `cls` argument). Defaults to False.
-        channel_specs (str, optional): See `channel_specs` in the `input_check` function.
-            Defaults to ''.
-
-    Raises:
-        ValueError: Unknown channel specification option (invalid character).
-
-    Returns:
-        Decorator: The node function decorator.
-    """
-    # Verify color channel specifications
-    valid_channel_specs = 'cg.-'
-    if len(channel_specs) >= 2 or channel_specs not in valid_channel_specs:
-        raise ValueError(f'Unknown channel specification option: {channel_specs}')
-
-    def decorator(func: FT) -> FT:
-        @functools.wraps(func)
-        def wrapper(*args: th.Tensor, **kwargs: ParamValue) -> Union[th.Tensor, Tuple[th.Tensor]]:
-
-            # Create the mapping from arguments to values and extract the variadic positional
-            # argument
-            bound_args = inspect.signature(func).bind(*args, **kwargs)
-            start_idx = int(class_method > 0)
-            img_args = bound_args.args[start_idx:]
-            args_to_check = [(f'img_{i}', img) for i, img in enumerate(img_args)]
-
-            # Check whether the positional arguments are 4D torch tensors
-            func_name = func.__name__
-            check_4d_tensors(args_to_check, func_name)
-
-            # Check whether non-empty inputs have identical shapes (last two dimensions only)
-            imgs_to_check: List[Tuple[str, th.Tensor]] = \
-                [pair for pair in args_to_check if isinstance(pair[1], th.Tensor)]
-            shapes_to_check = [(name, list(val.shape[2:])) for name, val in imgs_to_check]
-            check_identical_values(
-                shapes_to_check, func_name, val_description='spatial dimensions')
-
-            # Validate against color channel specifications
-            flag = channel_specs
-
-            if flag:
-                ## The number of channels of each non-empty input image must match the spec flag
-                check_image_types(imgs_to_check, func_name, types=flag, apply_to_all=True)
-
-                ## For 'c' or '-' flags, input images must have identical numbers of channels
-                if flag in 'c-':
-                    channels_to_check = [(name, val.shape[1]) for name, val in imgs_to_check]
-                    check_identical_values(
-                        channels_to_check, func_name, val_description='numbers of channels')
-
-            # Run the node function
-            return func(*args, **kwargs)
-
-        return wrapper
-    return decorator
-
-
-def color_input_check(img: th.Tensor, var_name: str):
-    """Verify a tensor input represents a color image.
-
-    Args:
-        img (Tensor): Source tensor input.
-        var_name (str): Argument name of the tensor.
-
-    Raises:
-        ValueError: The input tensor does not represent a color image.
-    """
-    if not isinstance(img, th.Tensor) or img.ndim != 4 or img.shape[1] not in (3, 4):
-        raise ValueError(f"Node function input '{var_name}' must be a color image but have "
-                         f"{img.shape[1]} channels")
-
-
-def grayscale_input_check(img: th.Tensor, var_name: str):
-    """Verify a tensor input represents a grayscale image.
-
-    Args:
-        img (Tensor): Source tensor input.
-        var_name (str): Argument name of the tensor.
-
-    Raises:
-        ValueError: The input tensor does not represent a grayscale image.
-    """
-    if not isinstance(img, th.Tensor) or img.ndim != 4 or img.shape[1] != 1:
-        raise ValueError(f"Node function input '{var_name}' must be a grayscale image but "
-                         f"have {img.shape[1]} channels")
-
-
-def check_4d_tensors(vals_to_check: List[Tuple[str, Any]], func_name: str):
-    """Verify a series of named input arguments are either 4D PyTorch tensors or none. Raises
-    an error when an exception is found.
-
-    Args:
-        vals_to_check (List[Tuple[str, Any]]): A dictionary of input arguments by argument name,
-            flattened into a list of key-value pairs.
-        func_name (str): Name of the node function where the checking happens.
-
-    Raises:
-        TypeError: An input is non-empty but not a PyTorch tensor.
-        ValueError: An input is a PyTorch tensor but without a 4D shape.
-    """
-    for name, val in vals_to_check:
-        if val is not None:
-            if not isinstance(val, th.Tensor):
-                raise TypeError(f"Input '{name}' to function '{func_name}' must be a "
-                                f"PyTorch tensor but got '{type(val).__name__}'")
-            elif val.ndim != 4:
-                raise ValueError(f"Input '{name}' to function '{func_name}' must be a "
-                                 f"4D PyTorch tensor but got shape {list(val.shape)}")
-
-
-def check_image_types(vals_to_check: List[Tuple[str, th.Tensor]], func_name: str,
-                      types: str = '', apply_to_all: bool = False):
-    """Verify a group of images conform to given type ('c'olor or 'g'rayscale) specifications.
-    Raises an error if there is any type violation.
-
-    Args:
-        vals_to_check (List[Tuple[str, Any]]): A dictionary of input images by argument name,
-            flattened into a list of key-value pairs.
-        func_name (str): Name of the node function where the checking happens.
-        types (str, optional): Channel specification string. See `channel_specs` in the
-            `input_check` function. Defaults to ''.
-        apply_to_all (bool, optional): If set to True, only the first character of the `types`
-            string will be used and the option will apply to all images. Otherwise, each input
-            image will match a character in the `types` string consecutively. Defaults to False.
-
-    Raises:
-        ValueError: Image type check fails, i.e., an input image doesn't match its type specifier.
-    """
-    # Generator that produces data-type pairs
-    if apply_to_all:
-        flag = types[0] if len(types) else '.'
-        generator = ((pair, flag) for pair in vals_to_check)
-    else:
-        generator = zip(vals_to_check, types)
-
-    for (name, val), flag in generator:
-        if flag == 'c' and val.shape[1] not in (3, 4) or \
-            flag == 'g' and val.shape[1] != 1:
-            image_type = 'color' if flag == 'c' else 'grayscale'
-            raise ValueError(f"Input '{name}' to function '{func_name}' must be a "
-                                f"{image_type} image but have {val.shape[1]} channels")
-
-
-def check_identical_values(vals_to_check: List[Tuple[str, Any]], func_name: str,
-                           val_description: str = 'values'):
-    """Verify a series of named input arguments are identical. Raises an error if a mismatch
-    is found.
-
-    Args:
-        vals_to_check (List[Tuple[str, Any]]): A dictionary of input arguments by argument name,
-            flattened into a list of key-value pairs.
-        func_name (str): Name of the node function where the checking happens.
-        val_description (str, optional): A brief text description of the checked value's meaning.
-            Only plurrals are grammatically correct. Defaults to 'values'.
-
-    Raises:
-        ValueError: Found two differing input arguments.
-    """
-    if len(vals_to_check) > 1:
-        arg_name, val = vals_to_check[0]
-        fail_pair = next((pair for pair in vals_to_check[1:] if pair[1] != val), None)
-        if fail_pair:
-            raise ValueError(f"Input '{arg_name}' and '{fail_pair[0]}' to function '{func_name}' "
-                             f"have mismatched {val_description} ({val} and {fail_pair[1]})")
+def to_tensor_and_numpy(a: Union[FloatArray, IntArray]) -> Tuple[th.Tensor, np.ndarray]:
+    return to_tensor(a), to_numpy(a)
 
 
 def check_output_dict(output_dict: Dict[str, th.Tensor]):
@@ -338,6 +72,92 @@ def check_arg_choice(arg: Constant, choices: Iterable[Constant], arg_name: str =
         raise ValueError(f"Valid options for argument '{arg_name}' are {choices}, but got {arg}")
 
 
+class Timer:
+    """A context manager that times the code section inside.
+    """
+    # Default logger associated with the timer
+    logger = logging.getLogger('diffmat.core')
+
+    def __init__(self, header: str = '', log_level: str = 'info', unit: str = 'ms',
+                 gpu_mode: bool = True):
+        """Initialize the timer.
+
+        Args:
+            header (str): On-screen header of the timer (e.g., describing its content).
+            log_level (str, optional): Message level of the timer ('info' or 'debug').
+                Defaults to 'info'.
+            unit (str, optional): Time unit ('ms' or 's'). Defaults to 'ms'.
+            gpu_mode (bool, optional): Whether to use more accurate timing for GPU.
+                Defaults to True.
+        """
+        # Check input validity
+        check_arg_choice(log_level, ['info', 'debug'], arg_name='log_level')
+        check_arg_choice(unit, ['ms', 's'], arg_name='unit')
+
+        self.header = header
+        self.log_level = log_level
+        self.unit = unit
+        self.gpu_mode = gpu_mode
+
+        # Initialize duration time
+        self.t_duration = -1.0
+
+    def __enter__(self) -> 'Timer':
+        """Start the timer upon context entry.
+        """
+        # GPU timing
+        if self.gpu_mode:
+            self.event_start = th.cuda.Event(enable_timing=True)
+            self.event_end = th.cuda.Event(enable_timing=True)
+            self.event_start.record()
+
+        # CPU timing
+        else:
+            self.t_start = time.time()
+
+        return self
+
+    def __exit__(self, *_) -> bool:
+        """Stop the timer and do not handle any exception.
+        """
+        unit, header, log_level = self.unit, self.header, self.log_level
+        unit_ms = unit == 'ms'
+
+        # GPU timing
+        if self.gpu_mode:
+            self.event_end.record()
+            th.cuda.synchronize()
+            t_duration = self.event_start.elapsed_time(self.event_end)
+            t_duration = t_duration * 1e-3 if not unit_ms else t_duration
+
+        # CPU timing
+        else:
+            self.t_end = time.time()
+            t_duration = self.t_end - self.t_start
+            t_duration = t_duration * 1e3 if unit_ms else t_duration
+
+        self.t_duration = t_duration
+
+        # Print measured time
+        if header:
+            getattr(self.logger, log_level)(f'{header}: {t_duration:.3f} {unit}')
+
+        return False
+
+    @property
+    def elapsed(self) -> float:
+        """Get the measured time consumption in seconds.
+
+        Returns:
+            float: Time consumption in seconds.
+        """
+        # The timer must be started before calling this method
+        if self.t_duration < 0:
+            raise RuntimeError('The timer has not been started')
+
+        return self.t_duration
+
+
 class OperandLevel:
     """Definition of operand categories (or levels) for dynamic code generation.
 
@@ -348,17 +168,21 @@ class OperandLevel:
         SCALAR (int): Flag of scalar values (float or int).
         VECTOR (int): Flag of vector values (list of floats or ints).
         TENSOR_1D (int): Flag of 1D PyTorch tensors (scalars or vectors; require gradient).
+        TENSOR_3D_4D (int): Flag of 3D and 4D PyTorch tensors (per-pixel scalars or vectors; may
+            require gradient).
         PROMOTION_FUNC_TEMPLATES (List[str]): Expression templates for promoting a value from
             one value category to the next.
     """
     SCALAR = 0          # Scalar: float | int
     VECTOR = 1          # Vector: List[float] | List[int]
     TENSOR_1D = 2       # 1D tensor: th.Tensor (ndim = 1)
+    TENSOR_3D_4D = 3    # 3D/4D tensor: th.Tensor (ndim = 3, 4) for pixel processor only
 
     # Function templates for operand level promotion, i.e., convert an operand to a higher level
     PROMOTION_FUNC_TEMPLATES: List[str] = [
         '[{}]',                 # Scalar to vector
         '_t({})',               # Vector to 1D tensor
+        '{}.view(1, 1, -1)',    # 1D tensor to 3D tensor
     ]
 
     @classmethod
@@ -381,13 +205,16 @@ class OperandLevel:
             level = cls.VECTOR
         elif isinstance(value, th.Tensor) and value.ndim in (0, 1):
             level = cls.TENSOR_1D
+        elif isinstance(value, th.Tensor) and value.ndim in (3, 4):
+            level = cls.TENSOR_3D_4D
         else:
             level = -1
 
         return level
 
     @classmethod
-    def promote(cls, value: ParamValue, level: int, promotion_mask: List[bool] = [True, True],
+    def promote(cls, value: ParamValue, level: int,
+                promotion_mask: List[bool] = [True, True, True],
                 device: str = 'cpu') -> ParamValue:
         """Promote an operand to a target level. This function has no effect when the operand is
         already at or above the target level.
@@ -397,7 +224,7 @@ class OperandLevel:
             level (int): Target value category.
             promotion_mask (List[bool], optional): Switches for every level of promotion. Please
                 refer to `diffmat/config/functions/add.yml` for a detailed explanation.
-                Defaults to [True, True].
+                Defaults to [True, True, True].
             device (str, optional): Device placement for the promoted operand (tensors only).
                 Defaults to 'cpu'.
 
@@ -407,7 +234,7 @@ class OperandLevel:
         value_level = cls.get_level(value)
 
         # Progressive promotion
-        for i in range(max(0, value_level), min(2, level)):
+        for i in range(max(0, value_level), min(3, level)):
             if not promotion_mask[i]:
                 break
             elif value_level <= i and level > i:
@@ -415,12 +242,14 @@ class OperandLevel:
                     value = [value]
                 elif i == 1:
                     value = th.tensor(value, device=device)
+                else:
+                    value = th.atleast_3d(value)
 
         return value
 
     @classmethod
     def promote_expr(cls, expr: str, expr_level: int, target_level: int,
-                     promotion_mask: List[bool] = [True, True]) -> str:
+                     promotion_mask: List[bool] = [True, True, True]) -> str:
         """Promote an operand (in the form of string expression) to a target level. This function
         has no effect when the operand is already at or above the target level.
 
@@ -429,7 +258,7 @@ class OperandLevel:
             expr_level (int): Value category of the source operand.
             target_level (int): Target value category.
             promotion_mask (List[bool], optional): See `promotion_mask` in the `promote` method.
-                Defaults to [True, True].
+                Defaults to [True, True, True].
 
         Returns:
             str: Expression of the promoted operand.
@@ -437,7 +266,7 @@ class OperandLevel:
         templates = cls.PROMOTION_FUNC_TEMPLATES
 
         # Progressive promotion by applying templates
-        for i in range(max(0, expr_level), min(2, target_level)):
+        for i in range(max(0, expr_level), min(3, target_level)):
             if not promotion_mask[i]:
                 break
             elif expr_level <= i and target_level > i:

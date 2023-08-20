@@ -8,14 +8,13 @@ from torchvision.utils import make_grid
 import torch as th
 import torch.nn as nn
 
-from .descriptor import TextureDescriptor
-from .sampler import ParamSampler
-from ..core.base import BaseEvaluableObject
-from ..core.graph import MaterialGraph
-from ..core.io import write_image
-from ..core.render import Renderer
-from ..core.types import DeviceType, PathLike
-from ..core.util import input_check
+from diffmat.core.base import BaseEvaluableObject
+from diffmat.core.material import MaterialGraph, Renderer
+from diffmat.core.material.util import input_check
+from diffmat.core.io import write_image
+from diffmat.core.types import DeviceType, PathLike
+from diffmat.optim.descriptor import TextureDescriptor
+from diffmat.optim.sampler import ParamSampler
 
 
 class ParamPredictor(BaseEvaluableObject):
@@ -85,7 +84,7 @@ class ParamPredictor(BaseEvaluableObject):
 
         # Construct an MLP feature-to-parameter regression network
         ## Calculate FC layer widths
-        num_params = self.graph.num_parameters(**self.sampler.level_kwargs)
+        num_params = self.sampler._num_parameters()
         fc_size = min(num_params * layer_size_param_mult, layer_size_max)
 
         ## Build network architecture
@@ -145,13 +144,12 @@ class ParamPredictor(BaseEvaluableObject):
             RuntimeError: Batch size is larger than 1 when optimizing with perceptual (texture
                 descriptor) loss. This is for debugging only and does not happen in practical use.
         """
-        graph, model, descriptor = self.graph, self.model, self.descriptor
-        sampler, level_kwargs = self.sampler, self.sampler.level_kwargs
+        graph, model, descriptor, sampler = self.graph, self.model, self.descriptor, self.sampler
         td_pyramid_level = self.td_pyramid_level
         logger = self.logger
 
         # Backup initial graph parameters
-        init_params = graph.get_parameters_as_tensor(**level_kwargs)
+        init_params = sampler._get_parameters()
 
         # Create result directories
         result_dir = Path(result_dir)
@@ -203,7 +201,7 @@ class ParamPredictor(BaseEvaluableObject):
                     raise RuntimeError('Texture descriptor loss does not support batch evaluation')
 
                 # Compute the descriptor of the predicted image
-                graph.set_parameters_from_tensor(pred.squeeze(0), **level_kwargs)
+                sampler._set_parameters(pred.squeeze(0))
                 pred_img = graph.evaluate()
                 pred_td = descriptor.evaluate(pred_img, td_level=td_pyramid_level)
 
@@ -222,7 +220,7 @@ class ParamPredictor(BaseEvaluableObject):
             # Compute the rendered textures of the generated parameters
             gt_img_list: List[th.Tensor] = []
             for params in gt.unbind():
-                graph.set_parameters_from_tensor(params, **level_kwargs)
+                sampler._set_parameters(params)
                 gt_img_list.append(graph.evaluate())
 
             return th.cat(gt_img_list, dim=0), gt
@@ -280,7 +278,7 @@ class ParamPredictor(BaseEvaluableObject):
                 # Collect input-prediction pairs
                 valid_imgs: List[th.Tensor] = []
                 for params, gt_img in zip(pred.unbind(), gt_imgs.unbind()):
-                    graph.set_parameters_from_tensor(params, **level_kwargs)
+                    sampler._set_parameters(params)
                     pred_img = graph.evaluate()
                     valid_imgs.extend((gt_img, pred_img.squeeze(0)))
 
@@ -305,7 +303,7 @@ class ParamPredictor(BaseEvaluableObject):
         logger.info('Network training finished')
 
         # Restore initial graph parameters
-        graph.set_parameters_from_tensor(init_params, **level_kwargs)
+        sampler._set_parameters(init_params)
 
     @input_check(1, channel_specs='c', class_method=True)
     def evaluate(self, img: th.Tensor, save_result: bool = False, result_dir: PathLike = '.',
@@ -332,10 +330,10 @@ class ParamPredictor(BaseEvaluableObject):
         # Save predicted parameters to local files
         if save_result:
             graph = self.graph
-            level_kwargs = self.sampler.level_kwargs
+            param_kwargs = self.sampler.param_kwargs
 
             # Back up initial graph parameters
-            init_params = graph.get_parameters_as_tensor(**level_kwargs)
+            init_params = graph.get_parameters_as_tensor(**param_kwargs)
 
             # Create output folders
             result_dir = Path(result_dir)
@@ -348,7 +346,7 @@ class ParamPredictor(BaseEvaluableObject):
 
                 # Generate SVBRDF maps and the rendering
                 with th.no_grad():
-                    graph.set_parameters_from_tensor(param, **level_kwargs)
+                    graph.set_parameters_from_tensor(param, **param_kwargs)
                     maps = graph.evaluate_maps()
                     render = graph.renderer(*maps)
 
@@ -362,6 +360,6 @@ class ParamPredictor(BaseEvaluableObject):
                 th.save({'param': param}, param_file)
 
             # Restore initial graph parameters
-            graph.set_parameters_from_tensor(init_params, **level_kwargs)
+            graph.set_parameters_from_tensor(init_params, **param_kwargs)
 
         return params

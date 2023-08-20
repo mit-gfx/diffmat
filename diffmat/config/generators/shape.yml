@@ -1,0 +1,62 @@
+func: shape
+
+input: null
+
+output:
+  output: ''
+
+param:
+- type: integer
+  sbs_name: Tiling
+  name: tiling
+  sbs_default: 1
+  scale: [1, 16]
+  quantize: True
+
+- type: list_index
+  sbs_name: Pattern
+  name: pattern
+  default: square
+  source_list:
+  - none
+  - square
+  - disc
+  - paraboloid
+  - bell
+  - gaussian
+  - thorn
+  - pyramid
+  - brick
+  - gradation
+  - waves
+  - half_bell
+  - ridged_bell
+  - crescent
+  - capsule
+  - cone
+  - hemisphere
+
+- type: default
+  sbs_name: Pattern_Specific
+  name: variation
+  default: 0.0
+
+- type: default
+  sbs_name: Size
+  name: scale
+  default: 1.0
+
+- type: default
+  sbs_name: Size_xy
+  name: size
+  default: [1.0, 1.0]
+
+- type: default
+  sbs_name: Angle
+  name: angle
+  default: 0.0
+
+- type: constant
+  sbs_name: Rotation
+  name: rotation_45
+  default: False

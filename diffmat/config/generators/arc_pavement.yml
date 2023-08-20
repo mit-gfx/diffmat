@@ -1,0 +1,111 @@
+func: arc_pavement
+
+input: 
+  pattern_input: img_in
+
+output:
+  output: ''
+
+param:
+- type: integer
+  sbs_name: scale
+  name: scale
+  sbs_default: 1
+  scale: [1, 8]
+  quantize: True
+
+- type: integer
+  sbs_name: pattern_amount
+  name: pattern_num
+  sbs_default: 12
+  scale: [1, 32]
+  quantize: True
+
+- type: default
+  sbs_name: pattern_amount_random
+  name: pattern_num_random
+  default: 0.0
+
+- type: integer
+  sbs_name: pattern_min_amount
+  name: pattern_num_min
+  sbs_default: 1
+  scale: [1, 10]
+  quantize: True
+
+- type: integer
+  sbs_name: arcs_amount
+  name: arc_num
+  sbs_default: 14
+  scale: [0, 20]
+  quantize: True
+
+- type: list_index
+  sbs_name: pattern
+  name: pattern
+  default: square
+  source_list:
+  - none
+  - image
+  - square
+  - disc
+  - paraboloid
+  - bell
+  - gaussian
+  - thorn
+  - pyramid
+  - brick
+  - gradation
+  - waves
+  - half_bell
+  - ridged_bell
+  - crescent
+  - capsule
+  - cone
+
+# This parameter seems useless since the filtering mode is manually set to 'nearest'
+# - type: list_index
+#   sbs_name: image_input_filtering
+#   name: input_filter_mode
+#   default: bilinear_mipmap
+#   source_list: [bilinear_mipmap, bilinear, nearest]
+
+- type: default
+  sbs_name: pattern_scale
+  name: pattern_scale
+  default: 1.0
+
+- type: default
+  sbs_name: pattern_width
+  name: pattern_width
+  default: 0.8
+
+- type: default
+  sbs_name: pattern_height
+  name: pattern_height
+  default: 0.9
+
+- type: default
+  sbs_name: pattern_width_random
+  name: pattern_width_random
+  default: 0.0
+
+- type: default
+  sbs_name: pattern_height_random
+  name: pattern_height_random
+  default: 0.0
+
+- type: default
+  sbs_name: global_pattern_width_random
+  name: pattern_spacing_random
+  default: 0.0
+
+- type: default
+  sbs_name: pattern_height_decrease
+  name: pattern_height_decay
+  default: 0.25
+
+- type: default
+  sbs_name: color_random
+  name: color_random
+  default: 0.0

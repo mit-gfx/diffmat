@@ -9,7 +9,7 @@ output:
 param:
 - type: constant
   sbs_name: Quantize
-  name: quantize
+  name: quantize_gray
   default: 3
 
 - type: constant

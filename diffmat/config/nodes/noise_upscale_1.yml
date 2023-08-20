@@ -1,0 +1,28 @@
+func: noise_upscale_1
+
+input:
+  Source: img_in
+
+output:
+  Noise_ResolutionX2: ''
+
+param:
+- type: default
+  sbs_name: Offset1X
+  name: offset_1x
+  default: 0.0
+
+- type: default
+  sbs_name: Offset1Y
+  name: offset_1y
+  default: 0.0
+
+- type: default
+  sbs_name: Offset2X
+  name: offset_2x
+  default: 0.0
+
+- type: default
+  sbs_name: Offset2Y
+  name: offset_2y
+  default: 0.0

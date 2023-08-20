@@ -1,0 +1,23 @@
+output: null
+
+param:
+  - type: list_index
+    sbs_name: colorswitch
+    name: mode
+    default: color
+    source_list: [gray, color]
+
+  - type: default
+    sbs_name: background
+    name: background_color
+    default: [0.0, 0.0, 0.0, 0.0]
+
+  - type: default
+    sbs_name: hurst
+    name: roughness
+    default: 1.0
+
+  - type: default
+    sbs_name: opacitymult
+    name: opacity
+    default: 1.0

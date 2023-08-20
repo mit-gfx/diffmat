@@ -7,8 +7,9 @@ from torch.nn.functional import interpolate
 import torch as th
 
 from diffmat import MaterialGraphTranslator as MGT, config_logger
-from diffmat.optim import ParamPredictor
 from diffmat.core.io import read_image
+from diffmat.core.util import FILTER_OFF
+from diffmat.optim import ParamPredictor
 
 
 def main():
@@ -80,8 +81,10 @@ def main():
                         help='Epoch number to load checkpoint from')
     parser.add_argument('-ld', '--load-checkpoint-dir', default='',
                         help="The folder where checkpoints are stored")
-    parser.add_argument('-lve', '--level-exposed', type=int, default=2,
+    parser.add_argument('-lve', '--filter-exposed', type=int, default=FILTER_OFF,
                         help='Exposed parameter training level')
+    parser.add_argument('-lvd', '--filter-generator', type=int, default=FILTER_OFF,
+                        help='Discrete parameter training level')
     parser.add_argument('-v', '--save-validation-imgs', action='store_true',
                         help='Save input and predicted images during validation')
 
@@ -114,10 +117,12 @@ def main():
     graph.compile()
 
     # Initialize the parameter predictor
-    arch_kwargs = {v: getattr(args, v) for v in \
+    arch_kwargs = {v: getattr(args, v) for v in
                    ('num_layers', 'layer_size_param_mult', 'layer_size_max', 'td_pyramid_level')}
-    sampler_kwargs = {v: getattr(args, v) for v in ('seed', 'level_exposed')}
-    sampler_kwargs['algo_kwargs'] = {'min': -0.15, 'max': 0.15, 'mu': 0.0, 'sigma': 0.03}
+    sampler_kwargs = {
+        **{v: getattr(args, v) for v in ('seed', 'filter_exposed', 'filter_generator')},
+        'algo_kwargs': {'min': -0.15, 'max': 0.15, 'mu': 0.0, 'sigma': 0.03}
+    }
 
     predictor = ParamPredictor(
         graph, arch_kwargs=arch_kwargs, sampler_kwargs=sampler_kwargs, device=device)

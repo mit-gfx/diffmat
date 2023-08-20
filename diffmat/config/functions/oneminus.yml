@@ -1,0 +1,13 @@
+func:
+  - '1 - {x}'
+  - '[1 - v for v in {x}]'
+  - '1 - {x}'
+  - '1 - {x}'
+
+output_level: [0, 1, 2, 3]
+
+input: [x]
+
+promotion_mask: [False, False, False]
+
+param: null

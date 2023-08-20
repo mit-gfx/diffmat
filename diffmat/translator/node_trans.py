@@ -3,20 +3,22 @@ from typing import Dict, List, Tuple, Sequence, Optional, Type, Union
 
 import torch as th
 
-from . import param_trans
-from .base import BaseNodeTranslator, BaseParamTranslator
-from .types import NodeFunction, NodeConfig
-from .util import FACTORY_LUT
-from ..core import functional
-from ..core.functional import resize_image_color
-from ..core.base import BaseParameter
-from ..core.node import MaterialNode, ExternalInputNode
+from diffmat.core.base import BaseParameter
+from diffmat.core.material import functional, noise
+from diffmat.core.material import MaterialNode, ExternalInputNode
+from diffmat.core.operator import resize_image_color
+from diffmat.core.util import check_arg_choice
+from diffmat.translator import param_trans
+from diffmat.translator.base import BaseNodeTranslator, BaseParamTranslator
+from diffmat.translator.types import NodeFunction, NodeConfig, Constant
+from diffmat.translator.util import FACTORY_LUT, gen_input_dict
 
 
 class MaterialNodeTranslator(BaseNodeTranslator[NodeConfig]):
     """Translator of an XML subtree to a differentiable material graph node.
     """
-    def __init__(self, root: ET.Element, name: str, type: str, res: int, node_config: NodeConfig):
+    def __init__(self, root: ET.Element, name: str, type: str, res: int, node_config: NodeConfig,
+                 integer_option: str = 'integer'):
         """Initialize the material graph node translator using a source XML subtree and
         configuration information (read from external files).
 
@@ -29,10 +31,13 @@ class MaterialNodeTranslator(BaseNodeTranslator[NodeConfig]):
             node_config (NodeConfig): Material node configuration info, such as node function name,
                 I/O connectors, and parameter specifications.
         """
+        # Validate the integer option parameter
+        check_arg_choice(integer_option, ['integer', 'constant'], 'integer_option')
+
         super().__init__(root, name, type, node_config)
 
-        # Node output resolution (after log2)
         self.res = res
+        self.integer_option = integer_option
 
         # Initialize node function
         self.node_func: NodeFunction = functional.passthrough
@@ -47,6 +52,14 @@ class MaterialNodeTranslator(BaseNodeTranslator[NodeConfig]):
         self.outputs: Dict[str, List[str]] = {}
         self._init_io_connectors()
 
+        # Helper function for keyword arguments in node constructors
+        self._node_kwargs = lambda: {
+            'inputs': self.inputs,
+            'outputs': self.outputs,
+            'allow_ablation': self.node_config.get('allow_ablation', False),
+            'is_generator': self.node_config.get('is_generator', False)
+        }
+
     def _init_node_function(self):
         """Load node function according to node configuration info.
 
@@ -58,12 +71,15 @@ class MaterialNodeTranslator(BaseNodeTranslator[NodeConfig]):
             func_type = self.node_config['func']
             if hasattr(functional, func_type):
                 self.node_func: NodeFunction = getattr(functional, func_type)
+            elif hasattr(noise, func_type):
+                self.node_func: NodeFunction = getattr(noise, func_type)
             else:
                 raise RuntimeError(f'Node function not found: {func_type}')
 
     def _init_param_translators(self):
         """Create parameter translators according to node configuration info.
         """
+        integer_option = self.integer_option
         self.param_translators.clear()
 
         # Skip if the node configuration doesn't specify any parameter info
@@ -86,16 +102,24 @@ class MaterialNodeTranslator(BaseNodeTranslator[NodeConfig]):
 
             # Get translator type and look up the factory for class name
             trans_type = config.get('type', 'default')
-            trans_class: Type[BaseParamTranslator] = \
-                getattr(param_trans, FACTORY_LUT['param_trans'][trans_type])
 
             # Retrieve associated parameter XML element
             root = param_et_dict.get(config['sbs_name'])
 
-            # Create the parameter translator
-            kwargs = config.copy()
+            # Delete irrelevant entries in parameter config
+            kwargs: Dict[str, Constant] = config.copy()
             del kwargs['type']
 
+            # Re-classify integer parameters and remove irrelevant entries according to user option
+            if trans_type == 'integer':
+                trans_type = integer_option
+                kwargs.pop('quantize', None)
+                if trans_type == 'constant':
+                    kwargs.pop('scale', None)
+
+            # Create the parameter translator
+            trans_class: Type[BaseParamTranslator] = \
+                getattr(param_trans, FACTORY_LUT['param_trans'][trans_type])
             self.param_translators.append(trans_class(root, **kwargs))
 
     def _init_io_connectors(self):
@@ -129,8 +153,12 @@ class MaterialNodeTranslator(BaseNodeTranslator[NodeConfig]):
             param: Union[BaseParameter, Sequence[BaseParameter]] = pt.translate(**obj_kwargs)
             params.append(param) if isinstance(param, BaseParameter) else params.extend(param)
 
-        return MaterialNode(self.name, self.res, self.node_func, params=params, inputs=self.inputs,
-                            outputs=self.outputs, seed=seed, **obj_kwargs)
+        # Create the material node 
+        return MaterialNode(self.name, self.type, self.res, self.node_func, params=params,
+                            seed=seed, **self._node_kwargs(), **obj_kwargs)
+
+    def back_translate(self, node: MaterialNode):
+        ...
 
 
 class ExternalInputNT(MaterialNodeTranslator):
@@ -141,7 +169,7 @@ class ExternalInputNT(MaterialNodeTranslator):
         """Initialize the material graph node translator from a source XML subtree and
         configuration information (actually unused for external input nodes).
 
-         Args:
+        Args:
             root (Element): Root node of the XML tree.
             name (str): External input node name.
             type (str): External input node type, equivalent to the name of the node function
@@ -183,5 +211,48 @@ class ExternalInputNT(MaterialNodeTranslator):
         Returns:
             MaterialNode: Translated external input node object.
         """
-        return ExternalInputNode(self.name, self.res, self.node_func, inputs=self.inputs,
-                                 outputs=self.outputs, seed=seed, **obj_kwargs)
+        return ExternalInputNode(self.name, self.type, self.res, self.node_func, seed=seed,
+                                 **self._node_kwargs(), **obj_kwargs)
+
+
+class DummyNodeTranslator(MaterialNodeTranslator):
+    """Translator that substitutes material graph nodes with 'dummy' pass-through nodes.
+    """
+    def __init__(self, root: ET.Element, name: str, type: str, res: int, node_config: NodeConfig,
+                 **kwargs):
+        """Initialize the dummy material graph node translator from a source XML subtree and
+        relevant configuration information. Node config info is still used to construct the I/O
+        connectors.
+
+        Args:
+            root (Element): Root node of the XML tree.
+            name (str): dummy node name.
+            type (str): dummy node operation type, equivalent to the name of the node function
+                in most cases.
+            res (int): Output texture resolution (after log2).
+            node_config (NodeConfig): Original node configuration info, only I/O connectors are
+                concerned.
+        """
+        # Delete parameter info from node configuration
+        node_config = node_config.copy()
+        node_config.pop('param', None)
+
+        super().__init__(root, name, type, res, node_config, **kwargs)
+
+    def _init_node_function(self):
+        """Set the node function as passthrough with a pre-specified number of outputs.
+        """
+        output_config = self.node_config.get('output') or {'': ''}
+        self.node_func = functional.passthrough_template(len(output_config))
+
+    def _init_io_connectors(self):
+        """Initialize input and output connectors from node configuration info.
+        """
+        # Generate custom input slot configuration for Pixel Processor and FX-Map nodes
+        if self.type == 'pixelprocessor':
+            self.node_config['input'] = gen_input_dict(self.root)
+        elif self.type == 'fxmaps':
+            self.node_config['input'] = {'background': 'img_bg', **gen_input_dict(self.root)}
+
+        # Create I/O connectors using the default routine
+        super()._init_io_connectors()
