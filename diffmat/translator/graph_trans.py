@@ -429,11 +429,6 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
                              external_inputs=external_inputs, exposed_params=exposed_params,
                              render_params=render_params, use_alpha=use_alpha, **kwargs)
 
-    def back_translate(self, graph: MaterialGraph):
-        """Update the XML tree by back-translating a material graph object.
-        """
-        ...
-
     def get_node_annotations(self) -> Dict[str, str]:
         """Generate a look-up dictionary that maps node names to annotation numbers. The annotation
         numbers are unique and allow for efficient node search in Adobe Substance 3D Designer.

@@ -177,8 +177,8 @@ from diffmat.core.io import read_image
 config_logger(level='default')
 
 # Input and output file paths
-sbs_file_path = Path('[PATH_TO_SBS]') / 'wood_american_cherry.sbs'
-img_path = Path('[PATH_TO_IMG]') / 'wood_dark_brown.jpg'
+sbs_file_path = Path('[PATH_TO_SBS_DIR]') / 'wood_american_cherry.sbs'
+img_path = Path('[PATH_TO_IMG_DIR]') / 'wood_dark_brown.jpg'
 result_dir = Path('[PATH_TO_RESULT_DIR]')
 
 # Specify a location for storing pre-cached texture images from SAT
@@ -255,10 +255,16 @@ The file tree below illustrates DiffMat's codebase structure, including potentia
 
 DiffMat bears a few functional limitations as listed below. We will continue to address most (if not all) of them in subsequent releases. Please refer to the [contributing guide](CONTRIBUTING.md) if you are looking forward to any new, exciting feature.
 
-* Changes in image size within a material graph are ignored.
-* Only square textures are supported, namely, we assume all intermediate texture maps to have square shapes.
+* Only square textures are supported, namely, we assume all intermediate texture maps to have square shapes. Changes in image resolution within a material graph are ignored.
 * The source SBS file should only contain one material graph without any custom dependent graphs.
+* Unsupported non-atomic material nodes or function nodes. See [FAQs](misc/faqs.md).
 * Some rarely used functionalities are omitted in supported nodes. Please refer to the [list of incomplete nodes](incomplete_nodes.md) for more information.
+* DiffMat can be heavy in VRAM usage. We recommend that your GPU
+have at least **16GB VRAM** if you need to optimize complex, production-grade materials like those presented in our paper.
+
+# FAQs
+
+Check out the dedicated FAQ document [here](misc/faqs.md).
 
 # Citation
 

@@ -157,9 +157,6 @@ class MaterialNodeTranslator(BaseNodeTranslator[NodeConfig]):
         return MaterialNode(self.name, self.type, self.res, self.node_func, params=params,
                             seed=seed, **self._node_kwargs(), **obj_kwargs)
 
-    def back_translate(self, node: MaterialNode):
-        ...
-
 
 class ExternalInputNT(MaterialNodeTranslator):
     """Translator for material graph nodes that read from external inputs.

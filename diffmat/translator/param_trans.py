@@ -238,9 +238,6 @@ class IntegerParamTranslator(ConstantParamTranslator):
 
         return value
 
-    def back_translate(self, param: IntegerParameter):
-        ...
-
 
 class ParamTranslator(ConstantParamTranslator):
     """Translator of an XML subtree to an optimizable material graph parameter.
@@ -324,9 +321,6 @@ class ParamTranslator(ConstantParamTranslator):
 
         return norm_value
 
-    def back_translate(self, param: Parameter):
-        ...
-
 
 class ListIndexPT(ConstantParamTranslator):
     """Parameter translator that interprets the parameter value as a list index.
@@ -357,9 +351,6 @@ class ListIndexPT(ConstantParamTranslator):
             Constant: Paramter value item from the list.
         """
         return self.source_list[int(value)]
-
-    def back_translate(self, param: ConstantParameter):
-        ...
 
 
 class GradientMapAnchorPT(ParamTranslator):
@@ -433,9 +424,6 @@ class GradientMapAnchorPT(ParamTranslator):
         norm_value = value.clone()
         norm_value[:, 0] = th.diff(norm_value[:, 0], prepend=th.zeros(1))
         return norm_value
-
-    def back_translate(self, param: Parameter):
-        ...
 
 
 class CurveAnchorPT(ParamTranslator):
@@ -514,6 +502,3 @@ class CurveAnchorPT(ParamTranslator):
 
         # Final per-value normalization to [0, 1]
         return super()._normalize(norm_value)
-
-    def back_translate(self, param: Parameter):
-        ...

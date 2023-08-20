@@ -5,11 +5,11 @@ from setuptools import find_packages, setup
 HERE = Path(__file__).resolve().parent
 
 README = (HERE / "README.md").read_text()
-DESC = ('Differentiable procedural material library based on PyTorch, supporting material graph '
-        'translation and parameter optimization against user-input appearance captures')
+DESC = ('PyTorch-based differentiable procedural material library, supporting material graph '
+        'translation and node parameter optimization against user-input appearance captures')
 
 REQUIRES_PYTHON = '>=3.7.0'
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 
 # Run setup
 setup(
@@ -32,7 +32,8 @@ setup(
         'scipy>=1.7.3',
         'imageio>=2.9.0',
         'pandas>=1.3.5',
-        'pyyaml>=6.0'
+        'pyyaml>=6.0',
+        'taichi>=1.3.0'
     ],
     include_package_data=True,
     license='Custom License',

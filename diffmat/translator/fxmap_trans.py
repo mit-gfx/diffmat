@@ -107,9 +107,6 @@ class FXMapNodeTranslator(BaseNodeTranslator[NodeConfig]):
         return node_class(self.name, self.type, params=params, inputs=self.inputs,
                           outputs=self.outputs, **obj_kwargs)
 
-    def back_translate(self, node: BaseFXMapNode):
-        ...
-
 
 class FXMapGraphTranslator(BaseGraphTranslator[FXMapNodeTranslator]):
     """Translator of XML into a differentiable FX-map graph.
