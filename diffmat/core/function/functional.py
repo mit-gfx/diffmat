@@ -58,7 +58,7 @@ def rotation_matrix(angle: FloatValue) -> FloatVector:
     """
     is_tensor = isinstance(angle, th.Tensor)
     cos_angle, sin_angle \
-        = (angle.cos(), angle.sin()) if is_tensor else math.cos(angle), math.sin(angle)
+        = (angle.cos(), angle.sin()) if is_tensor else (math.cos(angle), math.sin(angle))
     R = [cos_angle, -sin_angle, sin_angle, cos_angle]
     return th.cat(R, dim=-1) if is_tensor else R
 

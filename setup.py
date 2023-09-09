@@ -28,7 +28,7 @@ setup(
     install_requires=[
         'torch>=1.11.0',
         'torchvision>=0.12.0',
-        'numpy>=1.21.5'
+        'numpy>=1.21.5',
         'scipy>=1.7.3',
         'imageio>=2.9.0',
         'pandas>=1.3.5',

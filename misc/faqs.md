@@ -2,13 +2,22 @@
 
 ## Troubleshooting
 
-### Q: "FileNotFoundError: Configuration file not found for node type: ..."
+### Q: DiffMat reports "FileNotFoundError: Configuration file not found for node type: ...".
 
-This is a common error indicating that the source procedural material graph contains material or function nodes not supported by DiffMat, which causes failure in graph translation. Unfortunately, AS3D defines much more material node types than we can possibly reproduce. While we try our best to include additional, commonly used material and function nodes, please open a feature request if we missed any crucial node type.
+This is a common error indicating that the source procedural material graph contains material or function nodes not supported by DiffMat, which causes failure in graph translation. Unfortunately, AS3D defines much more material node types than we can possibly reproduce. While we try our best to include additional, commonly used material and function nodes, please open a feature request if you recommend us to implement any crucial node type.
+
+### Q: What does "KeyError: ..." mean from "MaterialGraphTranslator._init_graph_connectivity"?
+
+This error typically occurs when the source material graph contains legacy node types such as "Tile Generator (Legacy)" and "Clouds 2 (Legacy)", whose input and output slots are named differently from their latest versions. There are two potential fixes:
+* Manually replace legacy nodes with non-legacy counterparts in AS3D.
+* Generate the output of these nodes from SAT using the `-e` command line option. This only works if the legacy node is functionally a noise generator, i.e., it does not receive input from other nodes.
+
+Alternatively, it might be the case that AS3D has changed the implementations of some node types with newer releases. Feel free to [send us a reminder](../CONTRIBUTING.md) if DiffMat needs to be updated accordingly.
+
 
 ### Q: Why does the output texture from DiffMat look different from AS3D after graph translation?
 
-While DiffMat thrives to faithfully reproduce the functionalities of atomic and non-atomic nodes in AS3D, exact replication is *impossible* as AS3D is proprietary software. Nonetheless, the behavioral difference between DiffMat and AS3D is mostly minor. Please don't hesitate to [notify us](../CONTRIBUTING.md) if you notice substantial deviation in the output texture due to graph translation.
+While DiffMat thrives to faithfully reproduce the functionalities of atomic and non-atomic nodes in AS3D, exact replication is *impossible* as AS3D is proprietary software. Nonetheless, the behavioral difference between DiffMat and AS3D is mostly minor. Please don't hesitate to notify us if you notice substantial deviation in the output texture due to graph translation.
 
 Below are some possible reasons for mismatch between DiffMat and SD:
 * **Randomness in material nodes.** The random number generators used in DiffMat are different from SD as the latter is non-open-source. Consequently, material nodes that implement randomness will yield statistically similar but not identical results. Some prominent examples are *Safe Transform*, *Make It Tile Patch*, *Dissolve (Blend)*, and function graphs with *Rand* nodes.

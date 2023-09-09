@@ -6,7 +6,6 @@ import math
 import random
 
 from torch.optim import Adam
-from simanneal import Annealer
 from numpy.random import default_rng
 import torch as th
 import numpy as np
@@ -422,236 +421,6 @@ class HybridBackend(IntegerBackend):
         return self.graph.get_integer_parameters_as_config(**kwargs_int) if kwargs_int else {}
 
 
-class AxBO(IntegerBackend):
-    """Bayesian Optimization for integer parameter optimization using the `Ax` library.
-    """
-    def __init__(self, graph: MaterialGraph, loss_func: BaseMetric, **kwargs):
-        """Initialize the Ax BO backend.
-        """
-        super().__init__(graph, loss_func, **kwargs)
-
-    def _init_design_space(self):
-        """Initialize optimizable parameter configurations.
-        """
-        design_space = [dict(name=f'x{i}', type='range', bounds=[vl, vh], value_type='int')
-                        for i, (_, vl, vh) in enumerate(self._int_param_info())]
-        self.design_space = design_space
-
-    def _obj_func(self, params: Dict[str, int], **kwargs) -> Dict[str, Tuple[float, float]]:
-        """Define the objective function to be used in the optimizer.
-        """
-        loss = super()._obj_func(list(params.values()), **kwargs)
-        return {'loss': (loss, 0.0)}
-
-    def evaluate(self, num_iters: int = 1000, start_iter: int = 0,
-                 save_interval: int = 20, update_interval: int = 10,
-                 save_state_callback: SaveStateCallback = lambda *_: ...,
-                 save_image_callback: SaveImageCallback = lambda *_: ..., **kwargs) -> \
-                    Tuple[List[int], float, pd.DataFrame, Any]:
-        """Run Bayesian Optimization using a fixed number of evaluations.
-        """
-        del start_iter, update_interval
-
-        # Reset the number of evaluations
-        self.eval_counter = 0
-
-        # Wrap the object function
-        obj_func = partial(
-            self._obj_func, save_interval=save_interval, save_state_callback=save_state_callback,
-            save_image_callback=save_image_callback)
-
-        # Start BO
-        from ax import optimize
-        best_params, (best_loss, _), *ret = optimize(
-            self.design_space, obj_func, experiment_name='integer_opt', objective_name='loss',
-            minimize=True, total_trials=num_iters, **kwargs)
-
-        return (best_params.values(), best_loss['loss'], self._make_history(), *ret)
-
-
-class SkoptBO(IntegerBackend):
-    """Bayesian Optimization for integer parameter optimization using the `scikit-optimize`
-    library.
-    """
-    def __init__(self, graph: MaterialGraph, loss_func: BaseMetric, **kwargs):
-        """Initialize the skopt BO backend.
-        """
-        super().__init__(graph, loss_func, **kwargs)
-
-    def _init_design_space(self):
-        """Initialize optimizable parameter configurations.
-        """
-        from skopt.space import Integer
-        design_space = [Integer(vl, vh, name=f'x{i}')
-                        for i, (_, vl, vh) in enumerate(self._int_param_info())]
-        self.design_space = design_space
-
-    def evaluate(self, num_iters: int = 1000, start_iter: int = 0,
-                 save_interval: int = 20, update_interval: int = 10,
-                 save_state_callback: SaveStateCallback = lambda *_: ...,
-                 save_image_callback: SaveImageCallback = lambda *_: ..., **kwargs) -> \
-                    Tuple[List[int], float, pd.DataFrame, Any]:
-        """Run Bayesian Optimization using a fixed number of evaluations.
-        """
-        del start_iter, update_interval
-
-        # Reset the number of evaluations
-        self.eval_counter = 0
-
-        # Wrap the object function
-        obj_func = partial(
-            self._obj_func, save_interval=save_interval, save_state_callback=save_state_callback,
-            save_image_callback=save_image_callback)
-
-        # Start BO
-        from skopt import gp_minimize
-        res = gp_minimize(
-            obj_func, self.design_space, n_calls=num_iters,
-            n_initial_points=max(10, len(self.design_space) * 2), noise=1e-10, **kwargs)
-
-        return res.x, res.fun, self._make_history(), res
-
-
-class SimAnneal(HybridBackend):
-    """Simulated annealing for hybrid parameter optimization using the `simanneal` library.
-    """
-    def __init__(self, graph: MaterialGraph, loss_func: BaseMetric, seed: int = -1,
-                 T_max: float = 5e-3, T_min: float = 1e-6, max_steps: int = 10000,
-                 pt_prob: float = 0.1, pt_min: float = -0.05, pt_max: float = 0.05, **kwargs):
-        """Initialize the simulated annealing backend.
-        """
-        super().__init__(graph, loss_func, **kwargs)
-
-        # Save hyperparameters of the simulated annealing algorithm
-        self.T_max, self.T_min, self.max_steps = T_max, T_min, max_steps
-        self.pt_prob, self.pt_min, self.pt_max = pt_prob, pt_min, pt_max
-
-        # Create a NumPy random number generator for parameter perturbation
-        self.rng = default_rng(seed if seed >= 0 else None)
-
-        # Record the initial random number generator state without disrupting the default random
-        # number stream
-        rng_state_py = random.getstate()
-        random.seed(seed if seed >= 0 else None)
-
-        self.init_worker_state = self._get_worker_state()
-
-        random.setstate(rng_state_py)
-
-        # The current random number generator state
-        self.worker_state = self.init_worker_state
-
-    def reset(self):
-        """Reset the simulated annealing algorithm to its initial state.
-        """
-        # Reset graph parameters and the best solution
-        super().reset()
-
-        # Reset the current random number generator state
-        self.rng.bit_generator.state = self.init_worker_state['rng']
-        self.worker_state = self.init_worker_state
-
-    def _get_worker_state(self) -> Dict[str, Any]:
-        """Get the current state of the simulated annealing algorithm.
-        """
-        self.worker_state = {'rng': self.rng.bit_generator.state, 'worker': random.getstate()}
-        return self.worker_state
-
-    def _set_worker_state(self, state: Dict[str, Any]):
-        """Set the current state of the simulated annealing algorithm.
-        """
-        self.rng.bit_generator.state = state['rng']
-        self.worker_state = state
-
-    def _init_design_space(self):
-        """Initialize integer parameter ranges.
-        """
-        # Extract parameter ranges for integer parameters
-        int_param_ranges = \
-            np.array([[vl, vh] for _, vl, vh in self._int_param_info()], dtype=np.float32)
-        if len(int_param_ranges):
-            self.int_param_ranges = (int_param_ranges[:, 0], int_param_ranges[:, 1])
-        else:
-            self.int_param_ranges = (int_param_ranges, int_param_ranges)
-
-        # Converter functions between graph parameters and the worker's internal representation
-        def to_params(sa_state: SAState) -> Tuple[th.Tensor, List[int]]:
-            I = len(self.int_param_ranges[0])
-            return self._t(sa_state[I:]), sa_state[:I].astype(int).tolist()
-
-        def to_sa_state(params: Tuple[th.Tensor, List[int]]) -> SAState:
-            params, params_int = params
-            params_np = to_numpy(params)
-            params_int_np = np.array(params_int, dtype=np.float32)
-            return np.concatenate((params_int_np, params_np))
-
-        self._to_params = to_params
-        self._to_sa_state = to_sa_state
-
-    def _worker_move(self, sa_state: SAState) -> SAState:
-        """Randomly perturb the state of the simulated annealing worker.
-        """
-        rng = self.rng
-
-        # Sample perturbation mask and magnitude
-        size = len(sa_state)
-        pt_mask = rng.uniform(size=size) <= max(self.pt_prob, 1.0 / size)
-        pt_rands = rng.uniform(low=self.pt_min, high=self.pt_max, size=size)
-
-        # Calculate integer parameter perturbations
-        ipl, ipr = self.int_param_ranges
-        I = len(ipl)
-        pt_int = pt_rands[:I] * (ipr - ipl)
-        pt_int = (np.sign(pt_int) * np.ceil(np.abs(pt_int))).astype(np.float32)
-
-        # Update integer parameters and continuous parameters separately
-        sa_state_update = np.empty_like(sa_state)
-        sa_state_update[:I] = np.clip(sa_state[:I] + pt_int, ipl, ipr)
-        sa_state_update[I:] = np.clip(sa_state[I:] + pt_rands[I:], 0.0, 1.0)
-
-        return np.where(pt_mask, sa_state_update, sa_state)
-
-    def _worker_energy(self, sa_state: SAState, **obj_kwargs) -> float:
-        """Compute the loss function given a simulated annealing worker state.
-        """
-        return self._obj_func(self._to_params(sa_state), **obj_kwargs)
-
-    def evaluate(self, num_iters: int = 10000, start_iter: int = 0,
-                 save_interval: int = 500, update_interval: int = 100,
-                 save_state_callback: SaveStateCallback = lambda *_: ...,
-                 save_image_callback: SaveImageCallback = lambda *_: ...) -> \
-                    Tuple[Tuple[th.Tensor, List[int]], float, pd.DataFrame]:
-        """Run simulated annealing.
-        """
-        # Calculate starting and ending temperatures
-        T_max, T_min, max_steps = self.T_max, self.T_min, self.max_steps
-        T_factor = -math.log(T_max / T_min)
-        T_start = T_max * math.exp(T_factor * start_iter / max_steps)
-        T_end = T_max * math.exp(T_factor * (start_iter + num_iters) / max_steps)
-
-        # Construct the simulated annealing worker using the current parameters
-        init_state = self._to_sa_state(self._get_parameters())
-        move_func = self._worker_move
-        energy_func = partial(
-            self._worker_energy, save_interval=save_interval,
-            save_state_callback=save_state_callback, save_image_callback=save_image_callback)
-
-        worker = SimAnnealWorker(init_state, move_func, energy_func)
-        worker.Tmax, worker.Tmin, worker.steps = T_start, T_end, num_iters
-        worker.updates = num_iters // update_interval
-
-        # Start the worker after loading the local random number generator state
-        rng_state_py = random.getstate()
-        random.setstate(self.worker_state['worker'])
-
-        param_min, loss_min = worker.anneal()
-        self.param_min, self.loss_min = self._to_params(param_min), loss_min
-
-        random.setstate(rng_state_py)
-
-        return self.param_min, self.loss_min, self._make_history()
-
-
 class GridSearch(HybridBackend):
     """Grid search for hybrid parameter optimization.
     """
@@ -736,6 +505,282 @@ class GridSearch(HybridBackend):
         return self.param_min, self.loss_min, self._make_history()
 
 
+try:
+    import ax
+except ModuleNotFoundError:
+    class AxBO:
+        pass
+else:
+    class AxBO(IntegerBackend):
+        """Bayesian Optimization for integer parameter optimization using the `Ax` library.
+        """
+        def __init__(self, graph: MaterialGraph, loss_func: BaseMetric, **kwargs):
+            """Initialize the Ax BO backend.
+            """
+            super().__init__(graph, loss_func, **kwargs)
+
+        def _init_design_space(self):
+            """Initialize optimizable parameter configurations.
+            """
+            design_space = [dict(name=f'x{i}', type='range', bounds=[vl, vh], value_type='int')
+                            for i, (_, vl, vh) in enumerate(self._int_param_info())]
+            self.design_space = design_space
+
+        def _obj_func(self, params: Dict[str, int], **kwargs) -> Dict[str, Tuple[float, float]]:
+            """Define the objective function to be used in the optimizer.
+            """
+            loss = super()._obj_func(list(params.values()), **kwargs)
+            return {'loss': (loss, 0.0)}
+
+        def evaluate(self, num_iters: int = 1000, start_iter: int = 0,
+                    save_interval: int = 20, update_interval: int = 10,
+                    save_state_callback: SaveStateCallback = lambda *_: ...,
+                    save_image_callback: SaveImageCallback = lambda *_: ..., **kwargs) -> \
+                        Tuple[List[int], float, pd.DataFrame, Any]:
+            """Run Bayesian Optimization using a fixed number of evaluations.
+            """
+            del start_iter, update_interval
+
+            # Reset the number of evaluations
+            self.eval_counter = 0
+
+            # Wrap the object function
+            obj_func = partial(
+                self._obj_func, save_interval=save_interval, save_state_callback=save_state_callback,
+                save_image_callback=save_image_callback)
+
+            # Start BO
+            from ax import optimize
+            best_params, (best_loss, _), *ret = optimize(
+                self.design_space, obj_func, experiment_name='integer_opt', objective_name='loss',
+                minimize=True, total_trials=num_iters, **kwargs)
+
+            return (best_params.values(), best_loss['loss'], self._make_history(), *ret)
+
+
+try:
+    import skopt
+except ModuleNotFoundError:
+    class SkoptBO:
+        pass
+else:
+    class SkoptBO(IntegerBackend):
+        """Bayesian Optimization for integer parameter optimization using the `scikit-optimize`
+        library.
+        """
+        def __init__(self, graph: MaterialGraph, loss_func: BaseMetric, **kwargs):
+            """Initialize the skopt BO backend.
+            """
+            super().__init__(graph, loss_func, **kwargs)
+
+        def _init_design_space(self):
+            """Initialize optimizable parameter configurations.
+            """
+            from skopt.space import Integer
+            design_space = [Integer(vl, vh, name=f'x{i}')
+                            for i, (_, vl, vh) in enumerate(self._int_param_info())]
+            self.design_space = design_space
+
+        def evaluate(self, num_iters: int = 1000, start_iter: int = 0,
+                    save_interval: int = 20, update_interval: int = 10,
+                    save_state_callback: SaveStateCallback = lambda *_: ...,
+                    save_image_callback: SaveImageCallback = lambda *_: ..., **kwargs) -> \
+                        Tuple[List[int], float, pd.DataFrame, Any]:
+            """Run Bayesian Optimization using a fixed number of evaluations.
+            """
+            del start_iter, update_interval
+
+            # Reset the number of evaluations
+            self.eval_counter = 0
+
+            # Wrap the object function
+            obj_func = partial(
+                self._obj_func, save_interval=save_interval, save_state_callback=save_state_callback,
+                save_image_callback=save_image_callback)
+
+            # Start BO
+            from skopt import gp_minimize
+            res = gp_minimize(
+                obj_func, self.design_space, n_calls=num_iters,
+                n_initial_points=max(10, len(self.design_space) * 2), noise=1e-10, **kwargs)
+
+            return res.x, res.fun, self._make_history(), res
+
+
+try:
+    import simanneal
+except ModuleNotFoundError:
+    class SimAnneal:
+        pass
+else:
+    from simanneal import Annealer
+
+
+    # Helper/worker functions and classes
+    class SimAnnealWorker(Annealer):
+        """Simulated annealing for continuous parameter optimization using the `simanneal` library.
+        """
+        copy_strategy = 'method'
+
+        def __init__(self, initial_state: SAState, move_func: Callable[[SAState], SAState],
+                    energy_func: Callable[[SAState], float], **kwargs):
+            """Initialize the simulated annealing backend.
+            """
+            super().__init__(initial_state=initial_state, **kwargs)
+
+            self.move_func = move_func
+            self.energy_func = energy_func
+
+        def move(self):
+            """Perturb continuous parameters.
+            """
+            self.state[:] = self.move_func(self.state)
+
+        def energy(self) -> float:
+            """Calculate image loss.
+            """
+            return self.energy_func(self.state)
+
+    class SimAnneal(HybridBackend):
+        """Simulated annealing for hybrid parameter optimization using the `simanneal` library.
+        """
+        def __init__(self, graph: MaterialGraph, loss_func: BaseMetric, seed: int = -1,
+                    T_max: float = 5e-3, T_min: float = 1e-6, max_steps: int = 10000,
+                    pt_prob: float = 0.1, pt_min: float = -0.05, pt_max: float = 0.05, **kwargs):
+            """Initialize the simulated annealing backend.
+            """
+            super().__init__(graph, loss_func, **kwargs)
+
+            # Save hyperparameters of the simulated annealing algorithm
+            self.T_max, self.T_min, self.max_steps = T_max, T_min, max_steps
+            self.pt_prob, self.pt_min, self.pt_max = pt_prob, pt_min, pt_max
+
+            # Create a NumPy random number generator for parameter perturbation
+            self.rng = default_rng(seed if seed >= 0 else None)
+
+            # Record the initial random number generator state without disrupting the default random
+            # number stream
+            rng_state_py = random.getstate()
+            random.seed(seed if seed >= 0 else None)
+
+            self.init_worker_state = self._get_worker_state()
+
+            random.setstate(rng_state_py)
+
+            # The current random number generator state
+            self.worker_state = self.init_worker_state
+
+        def reset(self):
+            """Reset the simulated annealing algorithm to its initial state.
+            """
+            # Reset graph parameters and the best solution
+            super().reset()
+
+            # Reset the current random number generator state
+            self.rng.bit_generator.state = self.init_worker_state['rng']
+            self.worker_state = self.init_worker_state
+
+        def _get_worker_state(self) -> Dict[str, Any]:
+            """Get the current state of the simulated annealing algorithm.
+            """
+            self.worker_state = {'rng': self.rng.bit_generator.state, 'worker': random.getstate()}
+            return self.worker_state
+
+        def _set_worker_state(self, state: Dict[str, Any]):
+            """Set the current state of the simulated annealing algorithm.
+            """
+            self.rng.bit_generator.state = state['rng']
+            self.worker_state = state
+
+        def _init_design_space(self):
+            """Initialize integer parameter ranges.
+            """
+            # Extract parameter ranges for integer parameters
+            int_param_ranges = \
+                np.array([[vl, vh] for _, vl, vh in self._int_param_info()], dtype=np.float32)
+            if len(int_param_ranges):
+                self.int_param_ranges = (int_param_ranges[:, 0], int_param_ranges[:, 1])
+            else:
+                self.int_param_ranges = (int_param_ranges, int_param_ranges)
+
+            # Converter functions between graph parameters and the worker's internal representation
+            def to_params(sa_state: SAState) -> Tuple[th.Tensor, List[int]]:
+                I = len(self.int_param_ranges[0])
+                return self._t(sa_state[I:]), sa_state[:I].astype(int).tolist()
+
+            def to_sa_state(params: Tuple[th.Tensor, List[int]]) -> SAState:
+                params, params_int = params
+                params_np = to_numpy(params)
+                params_int_np = np.array(params_int, dtype=np.float32)
+                return np.concatenate((params_int_np, params_np))
+
+            self._to_params = to_params
+            self._to_sa_state = to_sa_state
+
+        def _worker_move(self, sa_state: SAState) -> SAState:
+            """Randomly perturb the state of the simulated annealing worker.
+            """
+            rng = self.rng
+
+            # Sample perturbation mask and magnitude
+            size = len(sa_state)
+            pt_mask = rng.uniform(size=size) <= max(self.pt_prob, 1.0 / size)
+            pt_rands = rng.uniform(low=self.pt_min, high=self.pt_max, size=size)
+
+            # Calculate integer parameter perturbations
+            ipl, ipr = self.int_param_ranges
+            I = len(ipl)
+            pt_int = pt_rands[:I] * (ipr - ipl)
+            pt_int = (np.sign(pt_int) * np.ceil(np.abs(pt_int))).astype(np.float32)
+
+            # Update integer parameters and continuous parameters separately
+            sa_state_update = np.empty_like(sa_state)
+            sa_state_update[:I] = np.clip(sa_state[:I] + pt_int, ipl, ipr)
+            sa_state_update[I:] = np.clip(sa_state[I:] + pt_rands[I:], 0.0, 1.0)
+
+            return np.where(pt_mask, sa_state_update, sa_state)
+
+        def _worker_energy(self, sa_state: SAState, **obj_kwargs) -> float:
+            """Compute the loss function given a simulated annealing worker state.
+            """
+            return self._obj_func(self._to_params(sa_state), **obj_kwargs)
+
+        def evaluate(self, num_iters: int = 10000, start_iter: int = 0,
+                    save_interval: int = 500, update_interval: int = 100,
+                    save_state_callback: SaveStateCallback = lambda *_: ...,
+                    save_image_callback: SaveImageCallback = lambda *_: ...) -> \
+                        Tuple[Tuple[th.Tensor, List[int]], float, pd.DataFrame]:
+            """Run simulated annealing.
+            """
+            # Calculate starting and ending temperatures
+            T_max, T_min, max_steps = self.T_max, self.T_min, self.max_steps
+            T_factor = -math.log(T_max / T_min)
+            T_start = T_max * math.exp(T_factor * start_iter / max_steps)
+            T_end = T_max * math.exp(T_factor * (start_iter + num_iters) / max_steps)
+
+            # Construct the simulated annealing worker using the current parameters
+            init_state = self._to_sa_state(self._get_parameters())
+            move_func = self._worker_move
+            energy_func = partial(
+                self._worker_energy, save_interval=save_interval,
+                save_state_callback=save_state_callback, save_image_callback=save_image_callback)
+
+            worker = SimAnnealWorker(init_state, move_func, energy_func)
+            worker.Tmax, worker.Tmin, worker.steps = T_start, T_end, num_iters
+            worker.updates = num_iters // update_interval
+
+            # Start the worker after loading the local random number generator state
+            rng_state_py = random.getstate()
+            random.setstate(self.worker_state['worker'])
+
+            param_min, loss_min = worker.anneal()
+            self.param_min, self.loss_min = self._to_params(param_min), loss_min
+
+            random.setstate(rng_state_py)
+
+            return self.param_min, self.loss_min, self._make_history()
+
+
 def get_backend(type: str, name: str, *args, **kwargs) -> BaseBackend:
     """Create an integer optimization backend by name. Other arguments are passed to the
     constructor of the backend class.
@@ -756,29 +801,3 @@ BACKEND_DICT: Dict[str, Dict[str, Type[BaseBackend]]] = {
     'integer': {'bo-ax': AxBO, 'bo-skopt': SkoptBO},
     'hybrid': {'simanneal': SimAnneal, 'grid': GridSearch},
 }
-
-
-# Helper/worker functions and classes
-class SimAnnealWorker(Annealer):
-    """Simulated annealing for continuous parameter optimization using the `simanneal` library.
-    """
-    copy_strategy = 'method'
-
-    def __init__(self, initial_state: SAState, move_func: Callable[[SAState], SAState],
-                 energy_func: Callable[[SAState], float], **kwargs):
-        """Initialize the simulated annealing backend.
-        """
-        super().__init__(initial_state=initial_state, **kwargs)
-
-        self.move_func = move_func
-        self.energy_func = energy_func
-
-    def move(self):
-        """Perturb continuous parameters.
-        """
-        self.state[:] = self.move_func(self.state)
-
-    def energy(self) -> float:
-        """Calculate image loss.
-        """
-        return self.energy_func(self.state)
