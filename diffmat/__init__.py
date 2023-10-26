@@ -8,4 +8,7 @@ if not sys.version_info >= (3, 7):
 from .core import config_logger, get_logger
 from .translator import MaterialGraphTranslator
 
+# Add missing version info (Issue #6)
+__version__ = '0.2.0'
+
 __all__ = ['MaterialGraphTranslator', 'config_logger', 'get_logger']
