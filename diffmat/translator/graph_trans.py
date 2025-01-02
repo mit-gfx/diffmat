@@ -35,13 +35,13 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
     """Translator of XML to a differentiable material graph.
     """
     def __init__(self, root: Union[PathLike, ET.Element], res: int, external_noise: bool = True,
-                 toolkit_path: Optional[PathLike] = None, ablation: bool = False,
-                 integer_option: str = 'integer'):
+                 toolkit_path: Optional[PathLike] = None, source_path: Optional[PathLike] = None,
+                 ablation: bool = False, integer_option: str = 'integer'):
         """Initialize the material graph translator using a source XML file or ElementTree root
         node.
 
         Args:
-            root (PathLike | Element): Path to the source XML file, or a root node of the XML tree.
+            root (PathLike | Element): Path to the source SBS file, or a root node of the XML tree.
             res (int): Output texture resolution (after log2).
             external_noise (bool, optional): When set to True, noises and patterns are generated
                 externally using Substance Automation Toolkit. Otherwise, they are generated from
@@ -49,6 +49,15 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
             toolkit_path (Optional[PathLike], optional): Path to the executables of Substance
                 Automation Toolkit. Passing None prompts the translator to use a OS-specific
                 default location (see `external_input.py`). Defaults to None.
+            source_path (Optional[PathLike], optional): Specify the path to the source SBS file
+                if the `root` argument refers to the root node of the XML tree. Defaults to None.
+            ablation (bool, optional): Enable ablation mode, which replaces certain nodes with
+                dummy pass-through nodes. Defaults to False.
+            integer_option (str, optional): Control how to handle integer parameters. The options
+                are:
+                    `integer`: Integer parameters are treated as optimizable integer variables.
+                    `constant`: Integer parameters are treated as constants.
+                Defaults to 'integer'.
         """
         self.res = res
         self.external_noise = external_noise
@@ -57,6 +66,9 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
 
         # Invoke the generic graph translation routine
         super().__init__(root, canonicalize=True)
+
+        # Freeze the preceding subgraphs of external input nodes
+        self._freeze_external_subgraphs()
 
         # Initialize exposed parameter translators from XML root
         self.exposed_param_translators: List[BaseParamTranslator] = []
@@ -70,7 +82,9 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
             self.graph_name = graph_name.lower().replace(' ', '_')
 
         # Create an external input generator
-        self.input_generator = ExtInputGenerator(self.root, res, toolkit_path=toolkit_path)
+        self.input_generator = ExtInputGenerator(
+            self.root, res, toolkit_path=toolkit_path,
+            source_path=source_path or (root if not isinstance(root, ET.Element) else None))
 
     def _init_graph(self):
         """Build a graph data structure from the XML tree, which is a dictionary from node UIDs to
@@ -181,12 +195,11 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
         # Whether the node has input connections
         has_input = bool(node_data['in'])
 
-        # Raise error if the node is not supported and cannot be handled by SAT
-        # Otherwise, query the look-up table for node category
-        if node_type not in NODE_CATEGORY_LUT and has_input:
-            raise NotImplementedError(f'Unsupported node type: {node_type}')
+        # Query the look-up table for node category. Unsupported nodes are handled by SAT
+        if node_type in NODE_CATEGORY_LUT:
+            node_category = NODE_CATEGORY_LUT[node_type]
         else:
-            node_category = NODE_CATEGORY_LUT.get(node_type, 'generator')
+            node_category = 'external' if has_input else 'generator'
 
         # Whether the node is a noise/pattern generator
         is_generator = node_category in ('dual', 'generator')
@@ -224,18 +237,38 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
                     'is_generator': is_generator
                 }
 
+                # Check if the node configuration matches the node data
+                if node_config.get('input'):
+                    unknown_input = next((n[0] for n in node_data['in']
+                                         if n[0] not in node_config['input']), None)
+                    if unknown_input is not None:
+                        raise KeyError(f"Node configuration of '{node_type}' does not have "
+                                       f"input connector '{unknown_input}'.")
+                if node_config.get('output'):
+                    unknown_output = next((n for n in node_data['out'].values()
+                                          if n not in node_config['output']), None)
+                    if unknown_output is not None:
+                        raise KeyError(f"Node configuration of '{node_type}' does not have "
+                                       f"output connector '{unknown_output}'.")
+
             # Nodes without input connection can be handled by SAT as a backup solution
             except FileNotFoundError as e:
                 if not has_input:
-                    self.logger.info(f"Node configuration of generator '{node_type}' does not "
-                                     f"exist. Revert to use SAT.")
+                    self.logger.info(f"Node configuration of '{node_type}' does not exist. "
+                                     f"Revert to using SAT.")
                     node_category = 'external'
                 else:
                     raise e
 
+            # Nodes with unknown connectors are also handled by SAT
+            except KeyError as e:
+                self.logger.warning(f"{e.args[0]} Revert to using SAT.")
+                node_category = 'external'
+
         # For 'external' input nodes, the node configuration only specifies output connectors
         if node_category == 'external':
             node_config = {
+                'input': {n[0]: n[0].lower() for n in node_data['in']},
                 'output': {n: n.lower() for n in node_data['out'].values()},
                 'allow_ablation': False,
                 'is_generator': False
@@ -377,8 +410,46 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
                 trans.inputs[input_name] = (ref_trans.name, ref_output_name)
                 ref_trans.outputs[ref_output_name].append(trans.name)
 
+    def _freeze_external_subgraphs(self):
+        """Freeze the preceding subgraphs of external input nodes. The output of these subgraphs
+        are generated using SAT and are not subject to optimization.
+        """
+        # Build a mapping from node names to translators
+        trans_dict = {t.name: t for t in self.node_translators}
+
+        # Process node translators in reverse data dependency order
+        for i, trans in reversed(list(enumerate(self.node_translators))):
+
+            # Remove the input connections of external input nodes
+            if isinstance(trans, ExternalInputNT):
+                trans.inputs = {k: None for k in trans.inputs}
+
+            # Replace default node translators with external input translators if the node has
+            # an output connection to an external input node
+            elif any(isinstance(trans_dict[conn], ExternalInputNT)
+                     for conns in trans.outputs.values() for conn in conns):
+
+                # Copy node configuration info from the original translator
+                new_node_config = trans.node_config.copy()
+                for dk in ('func', 'param'):
+                    new_node_config.pop(dk, None)
+
+                # Build a new external input translator and only retain output connections to
+                # non-external-input nodes
+                new_trans = ExternalInputNT(
+                    trans.root, trans.name, trans.type, trans.res, new_node_config,
+                    integer_option=self.integer_option)
+                new_trans.outputs = {
+                    k: [conn for conn in v if not isinstance(trans_dict[conn], ExternalInputNT)]
+                    for k, v in trans.outputs.items()}
+
+                # Replace the original translator with the new one
+                self.node_translators[i] = new_trans
+                trans_dict[trans.name] = new_trans
+
     def translate(self, seed: int = -1, use_alpha: bool = True, normal_format: str = 'dx',
                   gen_external_input: bool = True, external_input_folder: PathLike = '.',
+                  img_format: str = 'png', keep_input_sbs: bool = True,
                   device: DeviceType = 'cpu') -> MaterialGraph:
         """Translate XML into a differentiable material graph object.
 
@@ -395,6 +466,10 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
             external_input_folder (PathLike, optional): Target directory for storing all externally
                 generated texture maps in the material graph, including noises, patterns, and
                 linked/embedded images. Defaults to '.'.
+            img_format (str, optional): Image format for the generated external input textures.
+                Defaults to 'png'.
+            keep_input_sbs (bool, optional): Whether to keep the auxiliary input SBS file after
+                generating the external input textures. Defaults to True.
             device (DeviceType, optional): The device where the material graph is placed (e.g.,
                 CPU or GPU), per PyTorch device naming conventions. Defaults to 'cpu'.
 
@@ -410,9 +485,16 @@ class MaterialGraphTranslator(BaseGraphTranslator[MaterialNodeTranslator]):
 
         # Generate external input images
         if gen_external_input:
+
+            # Filter out external input nodes
+            external_input_trans = \
+                [trans for trans in self.node_translators if isinstance(trans, ExternalInputNT)]
+            self.logger.info(f"Using SAT to generate output textures for {len(external_input_trans)}/"
+                             f"{len(self.node_translators)} nodes.")
+
             external_inputs = self.input_generator.process(
-                [trans for trans in self.node_translators if isinstance(trans, ExternalInputNT)],
-                seed=seed, result_folder=external_input_folder, device=device)
+                external_input_trans, seed=seed, result_folder=external_input_folder,
+                img_format=img_format, keep_input_sbs=keep_input_sbs, device=device)
         else:
             external_inputs = {}
 

@@ -63,6 +63,7 @@ class MaterialGraph(BaseGraph[BaseMaterialNode]):
 
         # Runtime memory of the material graph (stores intermediate outputs)
         self.memory: Dict[str, th.Tensor] = {}
+        self.ref_counter: Dict[str, int] = {}
 
         # Topologically sort the nodes
         self._sort_nodes()
@@ -93,12 +94,14 @@ class MaterialGraph(BaseGraph[BaseMaterialNode]):
         # the node function. Also, the node.outputs dictionary read from YAML must preserve the
         # said I/O order
         self.program.clear()
+        self.ref_counter.clear()
 
         for node in self.nodes:
             op_name = node.name
             op_args = [get_variable_name(*val) if val else None for val in node.inputs.values()]
             op_result = [get_variable_name(op_name, key) for key in node.outputs]
             self.program.append({'op': op_name, 'args': op_args, 'result': op_result})
+            self.ref_counter.update({k: self.ref_counter.get(k, 0) + 1 for k in op_args if k})
 
         # Print the program
         program_str = [f'Compiled material graph program ({len(self.program)} nodes):']
@@ -108,11 +111,15 @@ class MaterialGraph(BaseGraph[BaseMaterialNode]):
                 f"{', '.join(inst['result'])}")
         self.logger.info('\n'.join(program_str))
 
-    def evaluate_maps(self, benchmarking: bool = False) -> Tuple[th.Tensor, ...]:
+    def evaluate_maps(self, benchmarking: bool = False,
+                      keep_memory: bool = False) -> Tuple[th.Tensor, ...]:
         """Evaluate the compiled program of the material graph.
 
         Args:
             benchmarking (bool, optional): Whether to benchmark the execution time of each node.
+                Defaults to False.
+            keep_memory (bool, optional): Whether to keep intermediate results in memory. Defaults
+                to False.
 
         Raises:
             RuntimeError: The material graph has not be compiled into an executable program.
@@ -132,8 +139,8 @@ class MaterialGraph(BaseGraph[BaseMaterialNode]):
         exposed_params = {key: th.atleast_1d(val) if isinstance(val, th.Tensor) else val \
                           for key, val in exposed_params.items()}
 
-        # Clear runtime memory
-        memory = self.memory
+        # Clear runtime memory and reset reference counters
+        memory, ref_counter = self.memory, self.ref_counter.copy()
         memory.clear()
 
         # Build a node dictionary indexed by name
@@ -148,10 +155,8 @@ class MaterialGraph(BaseGraph[BaseMaterialNode]):
         global_options = {'use_alpha': self.use_alpha}
 
         ## Change default torch device to the device where the graph is placed
-        is_on_cuda = self.device.type == 'cuda'
-        is_cuda_default = th.empty([]).is_cuda
-        if is_on_cuda != is_cuda_default:
-            th.set_default_tensor_type(th.cuda.FloatTensor if is_on_cuda else th.FloatTensor)
+        default_device = th.empty([]).device
+        th.set_default_device(self.device)
 
         for inst in self.program:
 
@@ -182,6 +187,14 @@ class MaterialGraph(BaseGraph[BaseMaterialNode]):
             # Store output tensors into memory
             memory.update({key: val for key, val in zip(inst['result'], result) if key})
 
+            # Update reference counters and free unused tensors from memory
+            if not keep_memory:
+                for arg_name in inst['args']:
+                    if arg_name:
+                        ref_counter[arg_name] -= 1
+                        if ref_counter[arg_name] == 0:
+                            del memory[arg_name]
+
         # Read output SVBRDF maps
         img_size = 1 << self.res
         outputs: List[th.Tensor] = []
@@ -201,8 +214,7 @@ class MaterialGraph(BaseGraph[BaseMaterialNode]):
             outputs.append(img)
 
         # Reset default device to the previous setting
-        if is_on_cuda != is_cuda_default:
-            th.set_default_tensor_type(th.cuda.FloatTensor if is_cuda_default else th.FloatTensor)
+        th.set_default_device(default_device)
 
         # Print benchmarking result, including the slowest nodes in forward and backward
         if benchmarking:
@@ -223,7 +235,7 @@ class MaterialGraph(BaseGraph[BaseMaterialNode]):
 
         return tuple(outputs)
 
-    def evaluate(self, benchmarking: bool = False) -> th.Tensor:
+    def evaluate(self, benchmarking: bool = False, keep_memory: bool = False) -> th.Tensor:
         """Evaluate the compiled program of the material graph and generate a rendered image of the
         resulting texture.
 
@@ -231,12 +243,16 @@ class MaterialGraph(BaseGraph[BaseMaterialNode]):
 
         Args:
             benchmarking (bool, optional): Whether to benchmark the execution time of each node.
+                Defaults to False.
+            keep_memory (bool, optional): Whether to keep intermediate results in memory. Defaults
+                to False.
 
         Returns:
             Tensor: Rendering of output SVBRDF maps from the differentiable procedural material
                 graph.
         """
-        return self.renderer(*self.evaluate_maps(benchmarking=benchmarking))
+        return self.renderer(
+            *self.evaluate_maps(benchmarking=benchmarking, keep_memory=keep_memory))
 
     def train(self, ablation_mode: str = 'none'):
         """Set the material graph to training state, which sets all optimizable parameters to

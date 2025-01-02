@@ -3,10 +3,14 @@
 </div>
 <br/>
 
-[![Latest Release](https://img.shields.io/badge/diffmat-0.2.0-blue)]()
+[![Latest Release](https://img.shields.io/badge/diffmat-0.2.1-blue)]()
 
 # Overview
-***DiffMat*** is a [PyTorch](https://pytorch.org)-based differentiable procedural material modeling library that reproduces the compositing graph system in [Adobe Substance 3D Designer](https://www.adobe.com/products/substance3d-designer.html) with auto-differentiation. DiffMat automatically converts procedural materials in Substance's format (`*.sbs`) into differentiable computation graphs and optimizes individual node parameters to match user-captured material appearances (e.g., cellphone flash photos).
+***DiffMat*** is a [PyTorch](https://pytorch.org)-based differentiable procedural material modeling library that reproduces the compositing graph system in [Adobe Substance 3D Designer](https://www.adobe.com/products/substance3d-designer.html) with auto-differentiation.
+
+Primary features:
+- Automatically converts Substance procedural materials (`*.sbs`) into differentiable computation graphs.
+- Optimizes material node parameters to match user-captured material appearances (e.g., cellphone flash photos).
 
 # Requirements
 
@@ -40,14 +44,16 @@ pip install taichi numpy scipy pandas imageio pyyaml setuptools
 
 ### Optional packages
 
-The following packages are *optional* unless you want to experiment on alternative node parameter optimization algorithms discused in [our paper](#citation), which we also provide in DiffMat.
+The following packages are *optional* unless you want to experiment on alternative node parameter optimization algorithms discused in [our paper](#citation) or other image-space metrics.
 
 * Bayesian optimization (BO): [scikit-optimize](https://scikit-optimize.github.io/stable/), [Ax](https://ax.dev/)
 * Simulated annealing: [simanneal](https://github.com/perrygeo/simanneal)
+* LPIPS metric: [lpips](https://pypi.org/project/lpips/)
+* L\*a\*b\* metric: [kornia](https://kornia.github.io/)
 
 This command will install them altogether.
 ```bash
-pip install scikit-optimize ax-platform simanneal
+pip install scikit-optimize ax-platform simanneal lpips kornia
 ```
 
 In addition, you may download the [FreeImage](https://imageio.readthedocs.io/en/v2.13.4/reference/_backends/imageio.plugins.freeimage.html) plugin to enable HDR texture images in OpenEXR format (`*.exr`).
@@ -285,9 +291,10 @@ DiffMat has empowered cutting-edge research from computer vision and graphics co
 - [**Node Graph Optimization Using Differentiable Proxies**](https://yiweihu.netlify.app/project/hu2022diff/), Hu et al., SIGGRAPH 2022.
 - [**Generating Procedural Materials from Text or Image Prompts**](https://yiweihu.netlify.app/uploads/hu2023gen/project), Hu et al., SIGGRAPH 2023.
 - [**PSDR-Room: Single Photo to Scene using Differentiable Rendering**](https://arxiv.org/abs/2307.03244), Yan et al., SIGGRAPH Asia 2023.
+- [**Procedural Material Generation with Reinforcement Learning**](https://dl.acm.org/doi/abs/10.1145/3687979), Li et al., SIGGRAPH Asia 2024.
 
 Feel free to [email](CONTRIBUTING.md) us if you would like your published work to be acknowledged in the list above.
 
 # License
 
-DiffMat is released under a custom license from MIT and Adobe Inc. Please read our attached [license file](LICENSE) carefully before using the software. We emphasize that DiffMat **shall not** be used for any commercial purposes.
+DiffMat is released under a joint **noncommercial** license from MIT and Adobe Inc. Please read our attached [license file](LICENSE) carefully before using the software.

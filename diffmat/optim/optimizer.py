@@ -132,7 +132,7 @@ class BaseOptimizer(BaseEvaluableObject):
 
     @input_check(1, class_method=True)
     def evaluate(self, img: th.Tensor, num_iters: int = 1000, result_dir: PathLike = '.',
-                 load_checkpoint_file: Optional[PathLike] = None, enable_save: bool = True,
+                 load_checkpoint_file: Optional[PathLike] = None, save_option: str = 'all',
                  save_interval: int = 100, update_interval: int = 10,
                  save_output_sbs: bool = False, img_format: str = 'png', **backend_kwargs):
         """Run the optimizer.
@@ -144,45 +144,60 @@ class BaseOptimizer(BaseEvaluableObject):
             load_checkpoint_file (PathLike, optional): Path to a checkpoint file to load from,
                 which contains the state of the optimizer (including graph parameters and the
                 optimizer state). Defaults to None.
-            enable_save (bool, optional): Whether to save intermediate results. Defaults to True.
+            save_option (str, optional): Options for saving results. Valid cases are:
+                'all': save the optimizer state, SVBRDF channels, and the rendered image;
+                'state': only save the optimizer state;
+                'image': only save the SVBRDF channels and the rendered image;
+                'render': only save the rendered image;
+                'none': do not save any result.
+                Defaults to 'all'.
             save_interval (int, optional): Interval (in iterations) between saving intermediate
                 results. Defaults to 100.
             update_interval (int, optional): Interval (in iterations) between updating the
                 optimal loss value and parameter values. Defaults to 10.
             save_output_sbs (bool, optional): Whether to save the optimized SVBRDF maps to an SBS
                 document. Defaults to False.
-            img_format (str, optional): Output image format ('png' or 'exr'). Defaults to 'png'.
+            img_format (str, optional): Output image format ('jpg', 'png', or 'exr').
+                Defaults to 'png'.
             backend_kwargs (Dict[str, Any], optional): Keyword arguments to pass into the backend
                 optimization algorithm. Defaults to {}.
         """
         graph, backend, timer, logger = self.graph, self.backend, self.timer, self.logger
 
-        # Prepare save file directories
-        if enable_save:
+        # Check the save option
+        check_arg_choice(save_option, ['all', 'state', 'image', 'render', 'none'], 'enable_save')
+        enable_save_state = save_option in ['all', 'state']
+        enable_save_image = save_option in ['all', 'image', 'render']
 
-            # Create result directories
-            result_dir = Path(result_dir)
+        # Initialize dummy saving callback functions
+        save_state_callback = save_image_callback = lambda *_: ...
+
+        # Define the callback function for checkpointing
+        result_dir = Path(result_dir)
+        if enable_save_state:
             checkpoint_dir = result_dir / 'checkpoints'
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-            for header in self.image_headers:
-                (result_dir / header).mkdir(parents=True, exist_ok=True)
-
-            # Define callback functions for checkpointing
             def save_state_callback(file_name: str, iter_num: int):
                 self._save_state(iter_num, checkpoint_dir / f'{file_name}.pth')
 
-            def save_image_callback(file_name: str, images: Tuple[th.Tensor, ...]):
-                self._save_images(file_name, *images, result_dir=result_dir, img_format=img_format)
+        # Define the callback function for saving images
+        if enable_save_image:
+            image_headers = self.image_headers if save_option == 'image' else ['render']
+            for header in image_headers:
+                (result_dir / header).mkdir(parents=True, exist_ok=True)
 
-            def save(file_name: str, iter_num: int):
-                maps = graph.evaluate_maps()
+            def save_image_callback(file_name: str, imgs: Tuple[th.Tensor, ...]):
+                self._save_images(file_name, *imgs[:len(image_headers)], result_dir=result_dir,
+                                  img_format=img_format)
+
+        # Define a save function for the current scope
+        def save(file_name: str, iter_num: int):
+            if enable_save_state:
                 save_state_callback(file_name, iter_num)
+            if enable_save_image:
+                maps = graph.evaluate_maps()
                 save_image_callback(file_name, (graph.renderer(*maps), *maps))
-
-        # Use dummy save functions
-        else:
-            save_state_callback, save_image_callback, save = [lambda *_: ...] * 3
 
         # Set the target image for the optimization backend
         backend.set_target_image(img)
@@ -214,7 +229,7 @@ class BaseOptimizer(BaseEvaluableObject):
             save('optimized', num_iters)
 
         # Save auxiliary data
-        if enable_save:
+        if save_option != 'none':
 
             # Save the optimization history
             history: pd.DataFrame = res[0]
@@ -235,8 +250,8 @@ class BaseOptimizer(BaseEvaluableObject):
 class Optimizer(BaseOptimizer):
     """Continuous control parameter optimizer for differentiable procedural material graphs.
     """
-    def __init__(self, graph: MaterialGraph, lr: float = 5e-4, metric: str = 'vgg',
-                 loss_type: str = 'l1', metric_kwargs: Dict[str, Any] = {},
+    def __init__(self, graph: MaterialGraph, lr: float = 5e-4, algorithm: str = 'adam',
+                 metric: str = 'vgg', loss_type: str = 'l1', metric_kwargs: Dict[str, Any] = {},
                  filter_exposed: int = FILTER_OFF, filter_generator: int = FILTER_OFF,
                  ablation_mode: str = 'none', **kwargs):
         """Initialize the continuous parameter optimizer.
@@ -270,13 +285,14 @@ class Optimizer(BaseOptimizer):
                 constructor.
         """
         param_io_kwargs = {'filter_exposed': filter_exposed, 'filter_generator': filter_generator}
-        backend_kwargs = {'lr': lr}
+        backend_kwargs = {'lr': lr} if algorithm == 'adam' else {}
 
         # Set the input graph as optimizable
         graph.train(ablation_mode=ablation_mode)
 
-        super().__init__(graph, param_io_kwargs=param_io_kwargs, backend_kwargs=backend_kwargs,
-                         metric=metric, loss_type=loss_type, metric_kwargs=metric_kwargs, **kwargs)
+        super().__init__(graph, algorithm=algorithm, param_io_kwargs=param_io_kwargs,
+                         backend_kwargs=backend_kwargs, metric=metric, loss_type=loss_type,
+                         metric_kwargs=metric_kwargs, **kwargs)
 
 
 class IntegerOptimizer(BaseOptimizer):

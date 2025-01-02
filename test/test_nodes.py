@@ -106,7 +106,8 @@ def main():
     # Evaluate the graph in forward-only mode
     for _ in range(args.iteration):
         with graph.timer('Forward'):
-            img_render = graph.evaluate(benchmarking=args.benchmarking)
+            img_render = graph.evaluate(
+                benchmarking=args.benchmarking, keep_memory=args.save_memory)
 
     # Test backward pass
     if args.backward > 0:
@@ -114,7 +115,8 @@ def main():
         graph.train()
         for _ in range(args.iteration):
             with graph.timer('Forward'):
-                img_render = graph.evaluate(benchmarking=args.benchmarking)
+                img_render = graph.evaluate(
+                    benchmarking=args.benchmarking, keep_memory=args.save_memory)
             if not args.benchmarking:
                 with graph.timer('Backward'):
                     img_render.sum().backward()

@@ -364,6 +364,10 @@ def perlin_noise(res_h: int = 256, res_w: int = 256, scale: int = 32, disorder: 
     if res_h != res_w:
         raise ValueError('Only square textures are supported for now')
 
+    # Return a gray image with non-positive scale
+    if scale <= 0:
+        return th.full((1, 1, res_h, res_w), 0.5)
+
     # -----------------
     # Background FX-map
     # -----------------

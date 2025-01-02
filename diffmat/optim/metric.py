@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from copy import deepcopy
 from typing import List, Dict, Callable, Type, Optional, Any
 
 from torch.fft import rfft2
@@ -20,7 +21,7 @@ class BaseMetric(BaseEvaluableObject):
 
         # Initialize the target texture descriptor
         self.target_td: Optional[th.Tensor] = None
-        self.td_kwargs = td_kwargs
+        self.td_kwargs = deepcopy(td_kwargs)
 
         # Retrieve the loss function
         if loss_type not in LOSS_DICT:
@@ -76,15 +77,66 @@ class VGGMetric(BaseMetric):
 class FFTMetric(BaseMetric):
     """Loss function where the texture descriptor comes from 2D Fourier transform. 
     """
-    def __init__(self, *args, **kwargs):
-        """Initialize the FFT loss function.
-        """
-        super().__init__(*args, **kwargs)
-
     def _calc_descriptor(self, img: th.Tensor) -> th.Tensor:
         """Compute the FFT texture descriptor for a batch of input images (BxCxHxW).
         """
         return rfft2(img, **self.td_kwargs).abs()
+
+
+class DownsampledMetric(BaseMetric):
+    """Downsample the input image for feature extraction.
+    """
+    def __init__(self, loss_type: str = 'l1', td_kwargs: Dict[str, Any] = {}, **kwargs):
+        """Initialize the downsampled texture descriptor.
+        """
+        super().__init__(loss_type, td_kwargs, **kwargs)
+
+        # Get the downsampling parameters
+        self.ds_size = self.td_kwargs.pop('size', 16)
+
+    def _calc_descriptor(self, img: th.Tensor) -> th.Tensor:
+        """Compute the downsampled texture descriptor for a batch of input images (BxCxHxW).
+        """
+        return F.interpolate(
+            img, size=self.ds_size, mode='bicubic', align_corners=False,
+            **self.td_kwargs).clamp_(0, 1)
+
+
+class DownsampledLABMetric(DownsampledMetric):
+    """Downsample the input image for feature extraction in the LAB color space.
+    """
+    def __init__(self, loss_type: str = 'l1', td_kwargs: Dict[str, Any] = {}, **kwargs):
+        """Initialize the downsampled LAB texture descriptor.
+        """
+        super().__init__(loss_type, td_kwargs, **kwargs)
+
+        # Get LAB channel weights
+        self.lab_weights = th.tensor(
+            self.td_kwargs.pop('lab_weights', [0.2, 1.0, 1.0]), device=self.device)
+
+    def _calc_descriptor(self, img: th.Tensor) -> th.Tensor:
+        """Compute the downsampled texture descriptor for a batch of input images (BxCxHxW).
+        """
+        from kornia.color import rgb_to_lab
+        return rgb_to_lab(super()._calc_descriptor(img)) * self.lab_weights.view(-1, 1, 1)
+
+
+class LPIPSMetric(BaseMetric):
+    """Loss function that uses the LPIPS metric.
+    """
+    def __init__(self, loss_type: str = 'l1', td_kwargs: Dict[str, Any] = {}, **kwargs):
+        """Initialize the LPIPS loss function.
+        """
+        super().__init__(loss_type, td_kwargs, **kwargs)
+
+        # Override the loss function using LPIPS
+        from lpips import LPIPS
+        self.loss_func = LPIPS(net='vgg', **self.td_kwargs).to(self.device)
+
+    def _calc_descriptor(self, img: th.Tensor) -> th.Tensor:
+        """Dummy function that returns the input image.
+        """
+        return img * 2 - 1
 
 
 class CombinedMetric(BaseMetric):
@@ -101,7 +153,7 @@ class CombinedMetric(BaseMetric):
             tds: List[BaseMetric] = []
             weights: List[float] = []
 
-            for key, val in config.copy().items():
+            for key, val in deepcopy(config).items():
                 weights.append(val.pop('weight', 1.0))
                 tds.append(get_metric(key, **val, **kwargs, parent=self))
 
@@ -152,5 +204,8 @@ LOSS_DICT: Dict[str, Callable[[th.Tensor, th.Tensor], th.Tensor]] = {
 METRIC_DICT: Dict[str, Type[BaseMetric]] = {
     'vgg': VGGMetric,
     'fft': FFTMetric,
+    'ds': DownsampledMetric,
+    'ds_lab': DownsampledLABMetric,
+    'lpips': LPIPSMetric,
     'combine': CombinedMetric,
 }

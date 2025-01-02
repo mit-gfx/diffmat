@@ -58,6 +58,9 @@ def blend(img_fg: Optional[th.Tensor] = None, img_bg: Optional[th.Tensor] = None
     # Empty inputs behave the same as zero
     zero = th.zeros([])
 
+    # Reserve background for cropping
+    img_bg_crop = img_bg if img_bg is not None else zero
+
     # Switch mode: no alpha blending
     if blending_mode == 'switch':
         img_fg = img_fg if channels_fg else zero
@@ -157,7 +160,7 @@ def blend(img_fg: Optional[th.Tensor] = None, img_bg: Optional[th.Tensor] = None
         start_col = math.floor(cropping[0] * img_out.shape[3])
         end_col = math.floor(cropping[1] * img_out.shape[3])
 
-        img_out_crop = img_bg.expand_as(img_out).clone()
+        img_out_crop = img_bg_crop.expand_as(img_out).clone()
         img_out_crop[..., start_row:end_row, start_col:end_col] = \
             img_out[..., start_row:end_row, start_col:end_col]
 

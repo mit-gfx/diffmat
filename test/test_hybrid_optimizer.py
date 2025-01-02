@@ -51,9 +51,9 @@ def main():
                         help='Save the optimized images in an SBS document')
 
     ## Optimization
-    parser.add_argument('-a', '--algorithm', metavar='ALGO', default='simanneal',
+    parser.add_argument('-a', '--algorithm', metavar='ALGO', default='grid',
                         help='Algorithm backend for integer optimization')
-    parser.add_argument('-n', '--num-iters', type=int, default=10000,
+    parser.add_argument('-n', '--num-iters', type=int, default=5,
                         help='Number of optimization iterations')
     parser.add_argument('-m', '--metric', default='vgg', choices=METRIC_DICT.keys(),
                         help="Texture descriptor type ('vgg', 'fft', or 'combine')")
@@ -62,7 +62,7 @@ def main():
     parser.add_argument('-s', '--seed', type=int, default=-1, help='Random seed')
     parser.add_argument('-ip', '--init-params', metavar='FILE', default='',
                         help='Specify the initial parameter values using an external file')
-    parser.add_argument('-si', '--save-interval', type=int, default=500,
+    parser.add_argument('-si', '--save-interval', type=int, default=1,
                         help='Number of iterations between two checkpoints')
     parser.add_argument('-lvi', '--filter-integer', type=int, default=FILTER_OFF,
                         help='Integer parameter optimization level')

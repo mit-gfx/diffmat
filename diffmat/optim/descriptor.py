@@ -1,6 +1,6 @@
 from typing import List
 
-from torchvision.models.vgg import vgg19
+from torchvision.models.vgg import vgg19, VGG19_Weights
 from torch.nn.functional import interpolate
 import torch as th
 import torch.nn as nn
@@ -39,7 +39,7 @@ class TextureDescriptor(BaseEvaluableObject):
         """Initialize the texture feature extraction model.
         """
         # Get a pretrained VGG19 network and set it to evaluation state
-        model: nn.Sequential = vgg19(pretrained=True).features.to(self.device)
+        model: nn.Sequential = vgg19(weights=VGG19_Weights.IMAGENET1K_V1).features.to(self.device)
         model.eval()
 
         # Disable network training
@@ -55,7 +55,8 @@ class TextureDescriptor(BaseEvaluableObject):
         def forward_hook(module: nn.Module, input: th.Tensor, output: th.Tensor):
             self.features.append(output)
 
-        # Register the forward hook function
+        # Register the forward hook function after average pooling layers
+        # Source: Texture Synthesis Using Convolutional Neural Networks [Gatys et al., 2015]
         for i in (4, 9, 18, 27):
             model[i].register_forward_hook(forward_hook)
 
@@ -87,7 +88,7 @@ class TextureDescriptor(BaseEvaluableObject):
         return th.cat([gram_matrix(img_feature) for img_feature in self.features], dim=1)
 
     @input_check(1, class_method=True)
-    def evaluate(self, img: th.Tensor, td_level: int = 2) -> th.Tensor:
+    def evaluate(self, img: th.Tensor, td_level: int = 2, resize_image: bool = False) -> th.Tensor:
         """Compute the texture descriptor of an input image at multiple scales.
 
         Args:
@@ -95,6 +96,8 @@ class TextureDescriptor(BaseEvaluableObject):
             td_level (int, optional): Mipmap stack levels when calculating the texture
                 descriptor at multiple scales. The feature vector size grows proportionally with
                 this number. Defaults to 2.
+            resize_image (bool, optional): Resize the input image to 224x224 before computing the
+                texture descriptor. Defaults to False.
 
         Raises:
             ValueError: Texture descriptor level is not an integer or holds a negative value.
@@ -105,6 +108,12 @@ class TextureDescriptor(BaseEvaluableObject):
         """
         if not isinstance(td_level, int) or td_level < 0:
             raise ValueError('The texture descriptor level must be a non-negative integer')
+
+        # Resize the input image to the target resolution
+        if resize_image and img.shape[-2:] != (224, 224):
+            img = interpolate(
+                img, size=(224, 224), mode='bicubic', antialias=True, align_corners=False)
+            img.clamp_(0, 1)
 
         with self.timer('Texture descriptor', log_level='debug'):
 

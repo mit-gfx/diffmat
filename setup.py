@@ -9,7 +9,7 @@ DESC = ('PyTorch-based differentiable procedural material library, supporting ma
         'translation and node parameter optimization against user-input appearance captures')
 
 REQUIRES_PYTHON = '>=3.7.0'
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 
 # Run setup
 setup(

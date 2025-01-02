@@ -35,7 +35,7 @@ def read_image(filename: PathLike, device: DeviceType = 'cpu') -> th.Tensor:
     # Convert the image array to float tensor according to its data type
     if img_np.dtype == np.uint8:
         img_np = img_np.astype(np.float32) / 255.0
-    elif img_np.dtype == np.uint16:
+    elif img_np.dtype in (np.uint16, np.int32):
         img_np = img_np.astype(np.float32) / 65535.0
     else:
         raise ValueError(f'Unrecognized image pixel value type: {img_np.dtype}')
@@ -54,15 +54,15 @@ def write_image(img: th.Tensor, filename: PathLike, img_format: str = 'png'):
     Args:
         img (Tensor): Source image tensor.
         filename (PathLike): Output file path.
-        img_format (str, optional): Image file format ('png' or 'exr'). Defaults to 'png'.
+        img_format (str, optional): Image file format ('jpg', 'png' or 'exr'). Defaults to 'png'.
 
     Raises:
-        ValueError: The image format is neither 'png' nor 'exr'.
+        ValueError: The image format is not 'jpg', 'png' or 'exr'.
         ValueError: The source image is not a 2D or 3D floating-point tensor.
     """
     # Check input validity
-    if img_format not in ('png', 'exr'):
-        raise ValueError("The output image format must be either 'png' or 'exr'")
+    if img_format not in ('jpg', 'png', 'exr'):
+        raise ValueError("The output image format must be 'jpg', 'png', or 'exr'")
     if not isinstance(img, th.Tensor) or not img.is_floating_point() or img.ndim not in (2, 3):
         raise ValueError('The source image must be a 2D or 3D floating-point tensor')
 
@@ -82,6 +82,8 @@ def write_image(img: th.Tensor, filename: PathLike, img_format: str = 'png'):
             img_np = (img_np * 255).astype(np.uint8)
         else:
             img_np = (img_np * 65535).astype(np.uint16)
+    elif img_format == 'jpg':
+        img_np = (img_np * 255).astype(np.uint8)
 
     filename = PurePath(filename).with_suffix(f'.{img_format}')
     imageio.imwrite(str(filename), img_np)

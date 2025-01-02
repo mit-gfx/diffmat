@@ -196,7 +196,9 @@ def to_constant(value_str: str, type: int) -> Constant:
     """
     def int32(x: str) -> int:
         int_x, p32 = int(x), 2 ** 31
-        return int_x % p32 - int_x // p32 * p32
+        if int_x >= p32 * 2 or int_x < -p32:
+            raise ValueError(f'Integer parameter value out of range: {int_x}')
+        return int_x % p32 - int_x // p32 * p32 if int_x >= 0 else int_x
 
     if type == tp.BOOL:
         value = bool(int(value_str))

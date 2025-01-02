@@ -4,6 +4,7 @@ from pathlib import PurePath, Path
 from typing import List, Tuple, Dict, Set, Any, Optional, Iterator
 import random
 import platform
+import shutil
 import subprocess
 import re
 import json
@@ -21,7 +22,8 @@ from diffmat.translator.util import has_connections, to_constant, get_value
 class ExtInputGenerator:
     """Generator for external noises or other input images using Substance Automation Toolkit.
     """
-    def __init__(self, root: ET.Element, res: int, toolkit_path: Optional[PathLike] = None):
+    def __init__(self, root: ET.Element, res: int, toolkit_path: Optional[PathLike] = None,
+                 source_path: Optional[PathLike] = None):
         """Initialize the external input generator by an example XML tree.
 
         Args:
@@ -33,6 +35,8 @@ class ExtInputGenerator:
                     Linux/Mac: the $HOME directory.
                     Windows: the Desktop directory.
                 Defaults to None.
+            source_path (Optional[PathLike], optional): Path to the source SBS file. Defaults to
+                None.
 
         Raises:
             RuntimeError: Toolkit path must be specified for an unknown OS platform.
@@ -41,6 +45,7 @@ class ExtInputGenerator:
         """
         self.source_root = root
         self.res = res
+        self.source_path = PurePath(source_path) if source_path else None
 
         # The ground-truth tree copy is used to generate ground truth outputs
         self.gt_root = deepcopy(self.source_root)
@@ -351,7 +356,7 @@ class ExtInputGenerator:
                         pos_stride=node_pos_stride, output_suffix=node_suffix)
 
             # Atomic generator nodes (one output only)
-            else:
+            elif trans.outputs['']:
                 node_out_et = node_et.find('compOutputs/compOutput')
                 node_out_uid = int(node_out_et.find('uid').get('v'))
                 self._add_output_node(
@@ -423,8 +428,8 @@ class ExtInputGenerator:
 
         # Detect output textures
         if not output_json[0]['outputs']:
-            self.logger.warning(f"'sbsrender' failed to generate output textures using the "
-                                 "default rendering engine. Switching to CPU (SSE2) ...")
+            self.logger.info(f"'sbsrender' failed to generate output textures using the "
+                             f"default rendering engine. Switching to CPU (SSE2) ...")
             raise RuntimeWarning()
 
         return output
@@ -453,11 +458,51 @@ class ExtInputGenerator:
             raise ValueError(f'Unrecognized texture generation mode: {mode}')
 
         # Create the result folder
+        result_folder = Path(result_folder)
         result_folder.mkdir(parents=True, exist_ok=True)
 
         # Substance document related file names
         sbs_file_name = (result_folder / file_name).with_suffix('.sbs')
         sbsar_file_name = (result_folder / file_name).with_suffix('.sbsar')
+
+        # Helper function for copying custom dependencies
+        def copy_deps(root: ET.Element, source_path: Optional[PathLike], copy_dir: PathLike):
+            """Copy custom dependencies to the result folder, tracing the dependency tree
+            recursively.
+
+            Args:
+                root (Element): Root node of the XML tree that encodes the material graph.
+                source_path (Optional[PathLike]): Path to the source SBS file.
+                copy_dir (PathLike): Output directory for copied dependencies.
+
+            Raises:
+                FileNotFoundError: Not providing the source file path for a material with custom
+                    dependencies.
+            """
+
+            # Find custom dependencies
+            for dep_et in root.iter('dependency'):
+                dep_file_name = dep_et.find('filename').get('v')
+                if dep_file_name != '?himself' and not dep_file_name.startswith('sbs://'):
+                    
+                    # Raise an error if the source path is not provided
+                    if not source_path:
+                        raise FileNotFoundError('The source file path must be provided to copy '
+                                                ' custom dependencies to the result folder')
+
+                    # Copy the dependency file
+                    dep_path = PurePath(source_path).parent / PurePath(dep_file_name)
+                    dep_copy_dir = Path(copy_dir) / PurePath(dep_file_name).parent
+                    dep_copy_dir.mkdir(parents=True, exist_ok=True)
+
+                    shutil.copy(dep_path, dep_copy_dir)
+
+                    # Read the dependency file and search for custom dependencies recursively
+                    dep_root = ET.parse(dep_path).getroot()
+                    copy_deps(dep_root, dep_path, dep_copy_dir)
+
+        # Copy custom dependencies to the result folder
+        copy_deps(self.root, self.source_path, result_folder)
 
         # Toolkit executable names
         cooker_path = self.toolkit_path / 'sbscooker'
@@ -519,7 +564,8 @@ class ExtInputGenerator:
 
     def process(self, node_trans: List[ExternalInputNT], seed: int = -1, img_format: str = 'png',
                 suffix: str = '', result_folder: PathLike = '.', read_output_images: bool = True,
-                device: DeviceType = 'cpu') -> Optional[Dict[str, th.Tensor]]:
+                keep_input_sbs: bool = True, device: DeviceType = 'cpu') \
+                    -> Optional[Dict[str, th.Tensor]]:
         """Process and generate external inputs based on their XML records.
 
         Args:
@@ -535,6 +581,8 @@ class ExtInputGenerator:
                 Defaults to '.'.
             read_output_images (bool, optional): When set to True, the generated textures are read
                 by Diffmat into a texture dictionary. Defaults to True.
+            keep_input_sbs (bool, optional): When set to True, the external input SBS file is kept
+                in the result folder. Defaults to True.
             device (DeviceType, optional): Device placement of image tensors in the aforementioned
                 texture dictionary. Defaults to 'cpu'.
 
@@ -565,8 +613,14 @@ class ExtInputGenerator:
         if read_output_images:
             external_inputs = load_input_dict(
                 result_folder, glob_pattern=f'*.{img_format}', device=device)
+        else:
+            external_inputs = None
 
-            return external_inputs
+        # Remove the input SBS files if necessary
+        if not keep_input_sbs:
+            shutil.rmtree(result_folder)
+
+        return external_inputs
 
     def process_gt(self, seed: int = -1, img_format: str = 'png', suffix: str = '',
                    result_folder: PathLike = '.'):

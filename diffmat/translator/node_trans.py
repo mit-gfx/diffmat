@@ -186,7 +186,9 @@ class ExternalInputNT(MaterialNodeTranslator):
             # Read all output channels of this node
             # Adjust any color image inputs to account for the use of alpha channel
             output_tensors: List[th.Tensor] = []
-            for output_name in self.node_config['output'].values():
+            output_config = self.node_config.get('output') or {'': ''}
+
+            for output_name in output_config.values():
                 output_name = f"{self.name}{'_' if output_name else ''}{output_name}"
                 img = external_input_dict.get(output_name)
                 if img is not None and img.shape[1] > 1:

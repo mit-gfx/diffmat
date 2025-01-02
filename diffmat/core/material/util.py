@@ -76,14 +76,21 @@ def input_check(num_inputs: int, channel_specs: str = '', reduction: str = 'all'
         @functools.wraps(func)
         def wrapper(*args: ParamValue, **kwargs: ParamValue) -> Union[th.Tensor, Tuple[th.Tensor]]:
 
+            # Get the function name and signature
+            func_name = func.__name__
+            sig = inspect.signature(func)
+
             # Create the mapping from arguments to values and extract the first 'num_inputs' values
-            bound_args = inspect.signature(func).bind(*args, **kwargs)
+            bound_args = sig.bind(*args, **kwargs)
             bound_args.apply_defaults()
             start_idx = int(class_method > 0)
             args_to_check = list(bound_args.arguments.items())[start_idx: start_idx + num_inputs]
 
+            # Check whether positional arguments are provided as None
+            params_to_check = list(sig.parameters.items())[start_idx: start_idx + num_inputs]
+            check_empty_inputs(params_to_check, args_to_check, func_name)
+
             # Check whether non-empty inputs are 4D torch tensors
-            func_name = func.__name__
             check_4d_tensors(args_to_check, func_name)
 
             # Check whether non-empty inputs have identical shapes (last two dimensions only)
@@ -216,6 +223,26 @@ def grayscale_input_check(img: th.Tensor, var_name: str):
     if not isinstance(img, th.Tensor) or img.ndim != 4 or img.shape[1] != 1:
         raise ValueError(f"Node function input '{var_name}' must be a grayscale image but "
                          f"have {img.shape[1]} channels")
+
+
+def check_empty_inputs(params_to_check: List[Tuple[str, inspect.Parameter]],
+                       vals_to_check: List[Tuple[str, Any]], func_name: str):
+    """Verify a series of named input arguments are not empty. Raises an error when an exception
+    is found.
+
+    Args:
+        params_to_check (List[Tuple[str, inspect.Parameter]]): A dictionary of input arguments by
+            argument name, flattened into a list of key-value pairs.
+        vals_to_check (List[Tuple[str, Any]]): A dictionary of input arguments by argument name,
+            flattened into a list of key-value pairs.
+        func_name (str): Name of the node function where the checking happens.
+
+    Raises:
+        TypeError: An input tensor is empty.
+    """
+    for (name, param), (_, val) in zip(params_to_check, vals_to_check):
+        if param.default is inspect.Parameter.empty and val is None:
+            raise TypeError(f"Input '{name}' to function '{func_name}' must not be empty")
 
 
 def check_4d_tensors(vals_to_check: List[Tuple[str, Any]], func_name: str):
